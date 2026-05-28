@@ -1,0 +1,176 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id         String          @id @default(uuid())
+  name       String          // Nome da Rede/Empresa contratante do SaaS (ex: "Padaria Pão de Ouro")
+  slug       String          @unique // URL amigável (ex: "padaria-ouro")
+  active     Boolean         @default(true)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  stores     Store[]
+  users      User[]
+  categories Category[]
+  products   Product[]
+  sales      Sale[]
+  movements  StockMovement[]
+}
+
+model Store {
+  id        String          @id @default(uuid())
+  name      String
+  address   String
+  phone     String
+  cnpj      String
+  active    Boolean         @default(true)
+  tenantId  String
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  users     User[]
+  products  StoreProduct[]
+  sales     Sale[]
+  configs   BreadConfig[]
+  movements StockMovement[]
+}
+
+model User {
+  id        String          @id @default(uuid())
+  name      String
+  email     String          @unique
+  password  String
+  role      String          // "ATENDENTE", "GERENTE", "DONO"
+  active    Boolean         @default(true)
+  tenantId  String
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  storeId   String?
+  store     Store?          @relation(fields: [storeId], references: [id])
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  sales     Sale[]
+  movements StockMovement[]
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  name      String
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([tenantId, name])
+}
+
+model Product {
+  id           String          @id @default(uuid())
+  name         String
+  barcode      String?
+  priceSale    Int             // em centavos
+  priceCost    Int             // em centavos
+  type         String          // "NORMAL", "PAO_FRANCES", "SALGADO", "BOLO"
+  unitMeasure  String          // "UN", "KG", "FATIA", "MEIA_DUZIA"
+  active       Boolean         @default(true)
+  imageUrl     String?
+  categoryId   String
+  category     Category        @relation(fields: [categoryId], references: [id])
+  tenantId     String
+  tenant       Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  stores       StoreProduct[]
+  saleItems    SaleItem[]
+  movements    StockMovement[]
+
+  @@unique([tenantId, barcode])
+}
+
+model StoreProduct {
+  id            String   @id @default(uuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  storeId       String
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  quantity      Float    // suporta peso (kg)
+  minStock      Float    @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@unique([storeId, productId])
+}
+
+model Sale {
+  id              String          @id @default(uuid())
+  storeId         String
+  store           Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User            @relation(fields: [userId], references: [id])
+  tenantId        String
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  saleDate        DateTime        @default(now())
+  subtotal        Int             // em centavos
+  discount        Int             @default(0) // em centavos
+  total           Int             // em centavos
+  paymentMethod   String          // "PIX", "CARTAO_DEBITO", "CARTAO_CREDITO", "DINHEIRO"
+  paymentStatus   String          // "PENDENTE", "APROVADO", "NEGADO", "CANCELADO"
+  receivedAmount  Int?            // em centavos (dinheiro)
+  changeAmount    Int?            // em centavos (dinheiro)
+  externalTxId    String?         // id transacao InfinitePay
+  nsuTx           String?
+  receiptUrl      String?
+  notes           String?
+  items           SaleItem[]
+  stockMovements  StockMovement[]
+}
+
+model SaleItem {
+  id            String   @id @default(uuid())
+  saleId        String
+  sale          Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+  quantity      Float
+  priceUnit     Int      // em centavos no momento da venda
+  subtotal      Int      // em centavos
+  type          String   // "NORMAL", "PAO_FRANCES", "SALGADO", "BOLO"
+  details       String?  // JSON string para detalhes adicionais (ex: qtdPaes se pão, tipo toggle)
+}
+
+model BreadConfig {
+  id            String   @id @default(uuid())
+  storeId       String
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  priceUnit     Int      // preço unitário em centavos (ex: R$0,50 = 50)
+  brackets      String   // Faixas salvas em JSON string ex: [{"ate": 50, "qtd": 1}, ...]
+  active        Boolean  @default(true)
+  updatedAt     DateTime @updatedAt
+
+  @@unique([storeId])
+}
+
+model StockMovement {
+  id          String   @id @default(uuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type        String   // "ENTRADA", "SAIDA", "AJUSTE"
+  quantity    Float
+  reason      String   // "VENDA", "REPOSICAO", "PERDA", "AJUSTE_MANUAL"
+  saleId      String?
+  sale        Sale?    @relation(fields: [saleId], references: [id])
+  createdAt   DateTime @default(now())
+}
