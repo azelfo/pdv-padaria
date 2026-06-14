@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { deleteSaleAction, updateSaleAction } from "./actions";
+import OwnerNavbar from "@/components/owner-navbar";
 
 interface SaleItemData {
   id: string;
@@ -310,24 +311,27 @@ export default function DashboardClient({ session, sales, stores }: DashboardCli
   }, [filteredSales]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#050507] text-slate-100 p-6 relative overflow-x-hidden">
+    <div className="min-h-screen flex flex-col bg-[#050507] text-slate-100 relative overflow-x-hidden">
+      <OwnerNavbar session={session} />
       
       {/* Luzes decorativas de fundo premium */}
       <div className="absolute top-10 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-[120px] pointer-events-none"></div>
       <div className="absolute bottom-10 left-10 w-96 h-96 bg-orange-600/5 rounded-full blur-[120px] pointer-events-none"></div>
 
-      <div className="w-full max-w-7xl mx-auto z-10 flex-1 flex flex-col gap-6">
+      <div className="w-full max-w-7xl mx-auto z-10 flex-1 flex flex-col gap-6 p-6">
         
         {/* CABEÇALHO SUPERIOR */}
         <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-white/5 pb-6">
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleBackToPdv}
-              className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center text-slate-400 hover:text-amber-400 hover:bg-white/5 hover:border-amber-500/20 transition cursor-pointer"
-              title="Voltar para o PDV"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+            {session.role !== "DONO" && (
+              <button
+                onClick={handleBackToPdv}
+                className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center text-slate-400 hover:text-amber-400 hover:bg-white/5 hover:border-amber-500/20 transition cursor-pointer"
+                title="Voltar para o PDV"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
             <div>
               <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block">
                 Painel do Proprietário • Acesso Restrito
@@ -340,13 +344,7 @@ export default function DashboardClient({ session, sales, stores }: DashboardCli
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={handleGoToEstoque}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/[0.02] border border-white/5 text-slate-300 hover:bg-white/5 hover:text-amber-400 transition cursor-pointer"
-            >
-              <Package className="w-4 h-4" />
-              Estoque
-            </button>
+            {/* O atalho para o Estoque já está na Navbar superior para o Dono */}
             <button
               onClick={handleResetFilters}
               className="w-9 h-9 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center text-slate-400 hover:text-amber-400 hover:bg-white/5 transition"

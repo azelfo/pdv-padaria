@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { createUserAction, updateUserAction, toggleUserStatusAction } from "./actions";
+import OwnerNavbar from "@/components/owner-navbar";
 
 interface UserData {
   id: string;
@@ -130,22 +131,25 @@ export default function UsersClient({ session, users, stores }: UsersClientProps
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#050507] text-slate-100 p-6">
+    <div className="min-h-screen flex flex-col bg-[#050507] text-slate-100 relative">
+      <OwnerNavbar session={session} />
       
       {/* Luzes decorativas */}
       <div className="absolute top-10 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-[100px] pointer-events-none"></div>
 
-      <div className="w-full max-w-6xl mx-auto z-10 flex-1 flex flex-col">
+      <div className="w-full max-w-6xl mx-auto z-10 flex-1 flex flex-col p-6">
         
         {/* CABEÇALHO DA PÁGINA */}
         <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleBackToPdv}
-              className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center text-slate-400 hover:text-amber-400 hover:bg-white/5 hover:border-amber-500/20 transition cursor-pointer"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+            {session.role !== "DONO" && (
+              <button
+                onClick={handleBackToPdv}
+                className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center text-slate-400 hover:text-amber-400 hover:bg-white/5 hover:border-amber-500/20 transition cursor-pointer"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
             <div>
               <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block">
                 Painel Administrativo

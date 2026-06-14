@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { createSaleAction, logoutAction, verifyAdminPasswordAction } from "./actions";
+import OwnerNavbar from "@/components/owner-navbar";
 
 interface Product {
   id: string;
@@ -148,6 +149,7 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
 
   // Estados do Modo Kiosk (Caixa Protegido)
   const [isKioskMode, setIsKioskMode] = useState<boolean>(() => {
+    if (session.role === "DONO") return false;
     if (typeof window !== "undefined") {
       return localStorage.getItem("pdv_kiosk_mode") === "true";
     }
@@ -158,6 +160,7 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
   const [kioskActionType, setKioskActionType] = useState<"logout" | "change_store" | "admin_page" | "unlock_kiosk" | null>(null);
   const [adminTargetUrl, setAdminTargetUrl] = useState("");
   const [showKioskFullscreenOverlay, setShowKioskFullscreenOverlay] = useState<boolean>(() => {
+    if (session.role === "DONO") return false;
     if (typeof window !== "undefined" && typeof document !== "undefined") {
       const kiosk = localStorage.getItem("pdv_kiosk_mode") === "true";
       return kiosk && !document.fullscreenElement;
@@ -1081,6 +1084,7 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
 
   return (
     <div className="min-h-screen flex flex-col bg-[#050507] text-slate-100">
+      <OwnerNavbar session={session} />
       
       {/* HEADER PRINCIPAL */}
       <header className="glass border-b border-white/5 py-4 px-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -1116,64 +1120,46 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
 
         {/* Ações de Caixa */}
         <div className="flex items-center gap-3 self-end md:self-auto">
-          {/* Botão do Modo Kiosk (Caixa Protegido) */}
-          <button
-            onClick={() => handleProtectedAction("unlock_kiosk")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer ${
-              isKioskMode
-                ? "bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 animate-pulse-subtle"
-                : "bg-white/[0.02] border border-white/5 text-slate-400 hover:bg-white/5 hover:text-amber-400"
-            }`}
-            title={
-              isKioskMode
-                ? "Terminal Protegido. Clique para desativar (Requer senha de Administrador)"
-                : "Ativar Modo Caixa Protegido (Trava o terminal em tela cheia e impede saídas)"
-            }
-          >
-            {isKioskMode ? (
-              <>
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
-                🔒 Caixa Protegido
-              </>
-            ) : (
-              <>
-                <span>🔓</span>
-                Modo Kiosk
-              </>
-            )}
-          </button>
+          {session.role !== "DONO" ? (
+            <>
+              {/* Botão do Modo Kiosk (Caixa Protegido) */}
+              <button
+                onClick={() => handleProtectedAction("unlock_kiosk")}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer ${
+                  isKioskMode
+                    ? "bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 animate-pulse-subtle"
+                    : "bg-white/[0.02] border border-white/5 text-slate-400 hover:bg-white/5 hover:text-amber-400"
+                }`}
+                title={
+                  isKioskMode
+                    ? "Terminal Protegido. Clique para desativar (Requer senha de Administrador)"
+                    : "Ativar Modo Caixa Protegido (Trava o terminal em tela cheia e impede saídas)"
+                }
+              >
+                {isKioskMode ? (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                    🔒 Caixa Protegido
+                  </>
+                ) : (
+                  <>
+                    <span>🔓</span>
+                    Modo Kiosk
+                  </>
+                )}
+              </button>
 
-          {(session.role === "DONO" || session.role === "GERENTE") && (
-            <button
-              onClick={() => handleProtectedAction("admin_page", "/pdv/estoque")}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/[0.02] border border-white/5 text-slate-300 hover:bg-white/5 hover:text-amber-400 transition cursor-pointer"
-            >
-              <ShoppingBag className="w-4 h-4" />
-              Estoque
-            </button>
-          )}
-
-          {session.role === "DONO" && (
-            <button
-              onClick={() => handleProtectedAction("admin_page", "/pdv/dashboard")}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/[0.02] border border-white/5 text-slate-300 hover:bg-white/5 hover:text-amber-400 transition cursor-pointer"
-            >
-              <BarChart3 className="w-4 h-4" />
-              Dashboard
-            </button>
-          )}
-
-          {session.role === "DONO" && (
-            <button
-              onClick={() => handleProtectedAction("admin_page", "/admin/users")}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/[0.02] border border-white/5 text-slate-300 hover:bg-white/5 hover:text-amber-400 transition cursor-pointer"
-            >
-              <User className="w-4 h-4" />
-              Funcionários
-            </button>
-          )}
-
-          {session.role === "DONO" && (
+              {session.role === "GERENTE" && (
+                <button
+                  onClick={() => handleProtectedAction("admin_page", "/pdv/estoque")}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/[0.02] border border-white/5 text-slate-300 hover:bg-white/5 hover:text-amber-400 transition cursor-pointer"
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  Estoque
+                </button>
+              )}
+            </>
+          ) : (
             <button
               onClick={() => handleProtectedAction("change_store")}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-white/[0.02] border border-white/5 text-slate-300 hover:bg-white/5 hover:text-amber-400 transition cursor-pointer"

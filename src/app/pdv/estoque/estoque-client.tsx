@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { adjustStockAction, addProductAction, deleteProductAction, updateProductAction } from "./actions";
+import OwnerNavbar from "@/components/owner-navbar";
 
 interface ProductData {
   id: string;
@@ -337,22 +338,25 @@ export default function EstoqueClient({ session, products, movements }: EstoqueC
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#050507] text-slate-100 p-6">
+    <div className="min-h-screen flex flex-col bg-[#050507] text-slate-100 relative">
+      <OwnerNavbar session={session} />
       
       {/* Luzes decorativas */}
       <div className="absolute top-10 right-10 w-96 h-96 bg-amber-500/5 rounded-full blur-[100px] pointer-events-none"></div>
 
-      <div className="w-full max-w-7xl mx-auto z-10 flex-1 flex flex-col">
+      <div className="w-full max-w-7xl mx-auto z-10 flex-1 flex flex-col p-6">
         
         {/* CABEÇALHO */}
         <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleBackToPdv}
-              className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center text-slate-400 hover:text-amber-400 hover:bg-white/5 hover:border-amber-500/20 transition cursor-pointer"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+            {session.role !== "DONO" && (
+              <button
+                onClick={handleBackToPdv}
+                className="w-10 h-10 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center text-slate-400 hover:text-amber-400 hover:bg-white/5 hover:border-amber-500/20 transition cursor-pointer"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
             <div>
               <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block">
                 Filial: {session.storeName || "Loja Ativa"}
@@ -377,16 +381,7 @@ export default function EstoqueClient({ session, products, movements }: EstoqueC
               />
             </div>
 
-            {session.role === "DONO" && (
-              <button
-                onClick={() => router.push("/pdv/dashboard")}
-                type="button"
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-slate-300 hover:bg-white/5 hover:text-amber-400 transition cursor-pointer text-xs font-bold uppercase tracking-wider shrink-0 select-none"
-              >
-                <BarChart3 className="w-4 h-4" />
-                Dashboard
-              </button>
-            )}
+            {/* O atalho para o Dashboard já está na Navbar superior para o Dono */}
 
             {session.role === "DONO" || session.role === "GERENTE" ? (
               <button
