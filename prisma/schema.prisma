@@ -130,6 +130,8 @@ model Sale {
   notes           String?
   items           SaleItem[]
   stockMovements  StockMovement[]
+  isSynced        Boolean         @default(false)
+  syncedAt        DateTime?
 }
 
 model SaleItem {
@@ -173,4 +175,6 @@ model StockMovement {
   saleId      String?
   sale        Sale?    @relation(fields: [saleId], references: [id])
   createdAt   DateTime @default(now())
+  isSynced    Boolean  @default(false)
+  syncedAt    DateTime?
 }
