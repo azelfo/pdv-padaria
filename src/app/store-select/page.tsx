@@ -1,7 +1,7 @@
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
-import { Store, MapPin, Phone, Building2, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import StoreSelectClient from "./store-select-client";
 import { destroySession } from "@/lib/auth";
 

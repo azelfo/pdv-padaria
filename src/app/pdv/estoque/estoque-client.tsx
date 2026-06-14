@@ -50,8 +50,18 @@ interface MovementData {
   createdAt: string;
 }
 
+interface SessionData {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  tenantId: string;
+  storeId: string | null;
+  storeName?: string | null;
+}
+
 interface EstoqueClientProps {
-  session: any;
+  session: SessionData;
   products: ProductData[];
   movements: MovementData[];
 }
@@ -777,7 +787,7 @@ export default function EstoqueClient({ session, products, movements }: EstoqueC
                 </label>
                 <select
                   value={adjustReason}
-                  onChange={(e) => setAdjustReason(e.target.value as any)}
+                  onChange={(e) => setAdjustReason(e.target.value as "REPOSICAO" | "PERDA" | "AJUSTE_MANUAL")}
                   className="w-full px-3 py-2.5 text-sm rounded-xl glass-input text-slate-100 focus:outline-none cursor-pointer font-semibold"
                 >
                   {adjustType === "ENTRADA" ? (

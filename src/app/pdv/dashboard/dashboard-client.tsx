@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { 
   ArrowLeft, 
@@ -18,8 +18,14 @@ import {
   ArrowRight,
   ChevronRight,
   Percent,
-  RefreshCw
+  RefreshCw,
+  Edit2,
+  AlertTriangle,
+  X,
+  Loader2
 } from "lucide-react";
+import { toast } from "react-hot-toast";
+import { deleteSaleAction, updateSaleAction } from "./actions";
 
 interface SaleItemData {
   id: string;
@@ -52,13 +58,23 @@ interface SaleData {
   items: SaleItemData[];
 }
 
+interface SessionData {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  tenantId: string;
+  storeId: string | null;
+  storeName?: string | null;
+}
+
 interface StoreData {
   id: string;
   name: string;
 }
 
 interface DashboardClientProps {
-  session: any;
+  session: SessionData;
   sales: SaleData[];
   stores: StoreData[];
 }
@@ -80,6 +96,78 @@ export default function DashboardClient({ session, sales, stores }: DashboardCli
   const [endDate, setEndDate] = useState(todayStr);
   const [selectedStoreId, setSelectedStoreId] = useState("TODOS");
   const [hoveredSaleId, setHoveredSaleId] = useState<string | null>(null);
+
+  const [isPending, startTransition] = useTransition();
+
+  // Estados dos Modais de Ação do Dono
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedSale, setSelectedSale] = useState<SaleData | null>(null);
+
+  // Estados do Formulário de Edição
+  const [editPaymentMethod, setEditPaymentMethod] = useState<"DINHEIRO" | "PIX" | "CARTAO_DEBITO" | "CARTAO_CREDITO">("DINHEIRO");
+  const [editDiscountInput, setEditDiscountInput] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+
+  const handleOpenDeleteModal = (sale: SaleData) => {
+    setSelectedSale(sale);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleOpenEditModal = (sale: SaleData) => {
+    setSelectedSale(sale);
+    setEditPaymentMethod(sale.paymentMethod as typeof editPaymentMethod);
+    setEditDiscountInput((sale.discount / 100).toFixed(2).replace(".", ","));
+    setEditNotes(sale.notes || "");
+    setIsEditModalOpen(true);
+  };
+
+  const handleDeleteSubmit = () => {
+    if (!selectedSale) return;
+    
+    startTransition(async () => {
+      const result = await deleteSaleAction(selectedSale.id);
+      if (result.success) {
+        toast.success("Venda excluída e estoque estornado com sucesso!");
+        setIsDeleteModalOpen(false);
+        setSelectedSale(null);
+      } else {
+        toast.error(result.error || "Erro ao excluir venda.");
+      }
+    });
+  };
+
+  const handleEditSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSale) return;
+
+    const discountCents = Math.round(parseFloat(editDiscountInput.replace(",", ".")) * 100);
+    if (isNaN(discountCents) || discountCents < 0) {
+      toast.error("Desconto inválido.");
+      return;
+    }
+
+    if (discountCents > selectedSale.subtotal) {
+      toast.error("O desconto não pode ser maior que o subtotal da venda.");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await updateSaleAction(selectedSale.id, {
+        paymentMethod: editPaymentMethod,
+        discount: discountCents,
+        notes: editNotes,
+      });
+
+      if (result.success) {
+        toast.success("Venda atualizada com sucesso!");
+        setIsEditModalOpen(false);
+        setSelectedSale(null);
+      } else {
+        toast.error(result.error || "Erro ao atualizar venda.");
+      }
+    });
+  };
 
   // Redirecionamentos de navegação
   const handleBackToPdv = () => {
@@ -632,14 +720,14 @@ export default function DashboardClient({ session, sales, stores }: DashboardCli
                         <td className="py-3 px-4 text-right font-black text-slate-100">
                           {(sale.total / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                         </td>
-                        <td className="py-3 px-4 text-center">
+                        <td className="py-3 px-4 text-center whitespace-nowrap space-x-1.5">
                           {/* Tooltip colapsável de itens rápido */}
                           <div className="relative inline-block">
                             <button
-                              className="px-3 py-1 rounded bg-white/[0.03] border border-white/5 text-[10px] font-bold text-slate-400 hover:text-amber-400 hover:border-amber-500/20 transition cursor-pointer"
+                              className="px-2.5 py-1 rounded bg-white/[0.03] border border-white/5 text-[10px] font-bold text-slate-400 hover:text-amber-400 hover:border-amber-500/20 transition cursor-pointer"
                               title="Visualizar Itens"
                             >
-                              Ver Itens
+                              Itens
                             </button>
                             
                             {/* Hover tooltip premium para itens */}
@@ -669,6 +757,22 @@ export default function DashboardClient({ session, sales, stores }: DashboardCli
                               </div>
                             )}
                           </div>
+
+                          <button
+                            onClick={() => handleOpenEditModal(sale)}
+                            className="px-2 py-1 rounded bg-blue-500/10 border border-blue-500/20 text-[10px] font-bold text-blue-400 hover:bg-blue-500/20 transition cursor-pointer font-sans"
+                            title="Editar metadados da venda"
+                          >
+                            Editar
+                          </button>
+
+                          <button
+                            onClick={() => handleOpenDeleteModal(sale)}
+                            className="px-2 py-1 rounded bg-red-500/10 border border-red-500/20 text-[10px] font-bold text-red-400 hover:bg-red-500/20 transition cursor-pointer font-sans"
+                            title="Excluir venda e estornar estoque"
+                          >
+                            Excluir
+                          </button>
                         </td>
                       </tr>
                     );
@@ -679,7 +783,164 @@ export default function DashboardClient({ session, sales, stores }: DashboardCli
           )}
         </section>
 
-      </div>
+      {/* 🔴 MODAL DE EXCLUSÃO DE VENDA */}
+      {isDeleteModalOpen && selectedSale && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-pulse-subtle">
+          <div className="glass rounded-3xl p-6 w-full max-w-md relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-red-500 to-transparent"></div>
+
+            <button
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setSelectedSale(null);
+              }}
+              className="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2 mb-3">
+              <AlertTriangle className="w-5 h-5 text-red-500" />
+              Excluir Venda
+            </h3>
+            
+            <p className="text-slate-400 text-xs mb-5">
+              Você está prestes a excluir a venda <span className="font-bold text-slate-300">{selectedSale.id.slice(0, 8).toUpperCase()}</span> realizada em <span className="font-bold text-slate-300">{selectedSale.storeName}</span>.
+            </p>
+
+            <div className="bg-red-500/5 border border-red-500/10 rounded-2xl p-4 flex gap-3 text-slate-300 text-xs mb-6">
+              <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-red-400 block mb-1">Aviso Importante:</span>
+                <span>Esta operação irá estornar automaticamente as quantidades de todos os itens desta venda de volta ao estoque da filial correspondente. As movimentações financeiras no painel serão atualizadas de imediato.</span>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDeleteModalOpen(false);
+                  setSelectedSale(null);
+                }}
+                className="flex-1 py-3 rounded-xl border border-white/5 text-slate-400 font-semibold text-xs hover:bg-white/5 transition cursor-pointer"
+              >
+                Voltar
+              </button>
+              <button
+                onClick={handleDeleteSubmit}
+                disabled={isPending}
+                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-red-500 to-orange-600 text-white font-extrabold text-xs hover:from-red-400 hover:to-orange-500 transition cursor-pointer disabled:opacity-40 flex items-center justify-center gap-1.5"
+              >
+                {isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  "Confirmar Exclusão"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🔵 MODAL DE EDIÇÃO DE VENDA */}
+      {isEditModalOpen && selectedSale && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="glass rounded-3xl p-6 w-full max-w-md relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-amber-500 to-transparent"></div>
+
+            <button
+              onClick={() => {
+                setIsEditModalOpen(false);
+                setSelectedSale(null);
+              }}
+              className="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2 mb-4">
+              <Edit2 className="w-5 h-5 text-amber-500" />
+              Corrigir Lançamento de Venda
+            </h3>
+
+            <form onSubmit={handleEditSubmit} className="space-y-4">
+              {/* Forma de Pagamento */}
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Método de Pagamento
+                </label>
+                <select
+                  value={editPaymentMethod}
+                  onChange={(e) => setEditPaymentMethod(e.target.value as typeof editPaymentMethod)}
+                  className="w-full px-3 py-2.5 text-xs rounded-xl glass-input text-slate-100 focus:outline-none cursor-pointer font-semibold"
+                >
+                  <option value="DINHEIRO" className="bg-[#121217]">💵 Dinheiro</option>
+                  <option value="PIX" className="bg-[#121217]">⚡ Pix (InfinitePay)</option>
+                  <option value="CARTAO_DEBITO" className="bg-[#121217]">💳 Cartão de Débito</option>
+                  <option value="CARTAO_CREDITO" className="bg-[#121217]">💳 Cartão de Crédito</option>
+                </select>
+              </div>
+
+              {/* Desconto */}
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Valor do Desconto (R$)
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="0,00"
+                  value={editDiscountInput}
+                  onChange={(e) => setEditDiscountInput(e.target.value)}
+                  className="w-full px-4 py-2.5 text-sm rounded-xl glass-input text-slate-100 placeholder-slate-700 focus:outline-none font-bold"
+                />
+                <span className="text-[10px] text-slate-500 mt-1 block font-semibold">
+                  Subtotal original: {(selectedSale.subtotal / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </span>
+              </div>
+
+              {/* Observações / Notas */}
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Observações / Motivo do Ajuste
+                </label>
+                <textarea
+                  placeholder="Ex: Cliente pagou no Pix em vez de Débito, ou erro na digitação do troco."
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  className="w-full px-4 py-2.5 text-xs rounded-xl glass-input text-slate-100 placeholder-slate-600 focus:outline-none font-medium h-20 resize-none"
+                />
+              </div>
+
+              {/* Botões */}
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditModalOpen(false);
+                    setSelectedSale(null);
+                  }}
+                  className="flex-1 py-3 rounded-xl border border-white/5 text-slate-400 font-semibold text-xs hover:bg-white/5 transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-extrabold text-xs hover:from-amber-400 hover:to-orange-400 transition cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-black" />
+                  ) : (
+                    "Salvar Alterações"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}      </div>
     </div>
   );
 }

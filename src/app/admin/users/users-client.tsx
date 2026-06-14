@@ -31,13 +31,23 @@ interface UserData {
   storeName: string | null;
 }
 
+interface SessionData {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  tenantId: string;
+  storeId: string | null;
+  storeName?: string | null;
+}
+
 interface StoreData {
   id: string;
   name: string;
 }
 
 interface UsersClientProps {
-  session: any;
+  session: SessionData;
   users: UserData[];
   stores: StoreData[];
 }

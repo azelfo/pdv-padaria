@@ -27,7 +27,7 @@ export interface CreateSaleResult {
   success: boolean;
   error?: string;
   saleId?: string;
-  receiptData?: any;
+  receiptData?: unknown;
 }
 
 /**

@@ -90,9 +90,10 @@ export async function adjustStockAction(input: {
     revalidatePath("/pdv/estoque");
 
     return { success: true };
-  } catch (error: any) {
+  } catch (error) {
     console.error("Erro na Server Action adjustStockAction:", error);
-    return { success: false, error: error.message || "Erro interno ao realizar ajuste de estoque." };
+    const errorMessage = error instanceof Error ? error.message : "Erro interno ao realizar ajuste de estoque.";
+    return { success: false, error: errorMessage };
   }
 }
 
@@ -223,9 +224,10 @@ export async function addProductAction(input: {
     revalidatePath("/pdv/estoque");
 
     return { success: true };
-  } catch (error: any) {
+  } catch (error) {
     console.error("Erro na Server Action addProductAction:", error);
-    return { success: false, error: error.message || "Erro interno ao cadastrar produto." };
+    const errorMessage = error instanceof Error ? error.message : "Erro interno ao cadastrar produto.";
+    return { success: false, error: errorMessage };
   }
 }
 
@@ -276,9 +278,10 @@ export async function deleteProductAction(productId: string): Promise<DeleteProd
     revalidatePath("/pdv/estoque");
 
     return { success: true };
-  } catch (error: any) {
+  } catch (error) {
     console.error("Erro na Server Action deleteProductAction:", error);
-    return { success: false, error: error.message || "Erro interno ao excluir produto." };
+    const errorMessage = error instanceof Error ? error.message : "Erro interno ao excluir produto.";
+    return { success: false, error: errorMessage };
   }
 }
 
@@ -368,8 +371,9 @@ export async function updateProductAction(input: {
     revalidatePath("/pdv/estoque");
 
     return { success: true };
-  } catch (error: any) {
+  } catch (error) {
     console.error("Erro na Server Action updateProductAction:", error);
-    return { success: false, error: error.message || "Erro interno ao atualizar produto." };
+    const errorMessage = error instanceof Error ? error.message : "Erro interno ao atualizar produto.";
+    return { success: false, error: errorMessage };
   }
 }

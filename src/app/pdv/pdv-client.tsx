@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useMemo, useEffect, useRef } from "react";
+import { useState, useTransition, useMemo, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Search, 
@@ -56,8 +56,85 @@ interface CartItem {
   details?: string;
 }
 
+interface SessionData {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  tenantId: string;
+  storeId: string | null;
+  storeName: string | null;
+}
+
+interface SaleReceiptItemProduct {
+  name: string;
+  unitMeasure: string;
+}
+
+interface SaleReceiptItem {
+  id: string;
+  productId: string;
+  quantity: number;
+  priceUnit: number;
+  subtotal: number;
+  product?: SaleReceiptItemProduct;
+  details?: string | null;
+}
+
+interface SaleReceiptStore {
+  name: string;
+  address: string;
+  phone: string;
+  cnpj: string;
+}
+
+interface SaleReceiptUser {
+  name: string;
+  role: string;
+}
+
+interface SaleReceipt {
+  id: string;
+  storeId: string;
+  store?: SaleReceiptStore;
+  userId: string;
+  user?: SaleReceiptUser;
+  tenantId: string;
+  saleDate: string | Date;
+  subtotal: number;
+  discount: number;
+  total: number;
+  paymentMethod: "DINHEIRO" | "PIX" | "CARTAO_DEBITO" | "CARTAO_CREDITO";
+  paymentStatus: "PENDENTE" | "APROVADO" | "NEGADO" | "CANCELADO";
+  receivedAmount?: number | null;
+  changeAmount?: number | null;
+  notes?: string | null;
+  items?: SaleReceiptItem[];
+  externalTxId?: string | null;
+  nsuTx?: string | null;
+  receiptUrl?: string | null;
+}
+
+interface OfflineSale {
+  id: string;
+  items: {
+    productId: string;
+    name: string;
+    quantity: number;
+    priceUnit: number;
+    subtotal: number;
+    type: string;
+    details?: string;
+  }[];
+  paymentMethod: "DINHEIRO" | "PIX" | "CARTAO_DEBITO" | "CARTAO_CREDITO";
+  receivedAmount?: number;
+  changeAmount?: number;
+  discount?: number;
+  notes?: string;
+}
+
 interface PdvClientProps {
-  session: any;
+  session: SessionData;
   products: Product[];
   breadConfig: {
     priceUnit: number;
@@ -80,11 +157,27 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
   const [kioskPasswordInput, setKioskPasswordInput] = useState("");
   const [kioskActionType, setKioskActionType] = useState<"logout" | "change_store" | "admin_page" | "unlock_kiosk" | null>(null);
   const [adminTargetUrl, setAdminTargetUrl] = useState("");
-  const [showKioskFullscreenOverlay, setShowKioskFullscreenOverlay] = useState(false);
+  const [showKioskFullscreenOverlay, setShowKioskFullscreenOverlay] = useState<boolean>(() => {
+    if (typeof window !== "undefined" && typeof document !== "undefined") {
+      const kiosk = localStorage.getItem("pdv_kiosk_mode") === "true";
+      return kiosk && !document.fullscreenElement;
+    }
+    return false;
+  });
 
   // Estados de Contingência Offline & Produtos Locais
   const [localProducts, setLocalProducts] = useState<Product[]>(products);
-  const [isOnline, setIsOnline] = useState(true);
+  const [prevProducts, setPrevProducts] = useState<Product[]>(products);
+  if (products !== prevProducts) {
+    setPrevProducts(products);
+    setLocalProducts(products);
+  }
+  const [isOnline, setIsOnline] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return navigator.onLine;
+    }
+    return true;
+  });
 
   // Estados principais
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -108,15 +201,13 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
 
   // Modal de Recibo
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
-  const [receiptData, setReceiptData] = useState<any>(null);
+  const [receiptData, setReceiptData] = useState<SaleReceipt | null>(null);
 
   // Referência para o timer de Polling
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Monitora a conectividade com a internet em tempo real
   useEffect(() => {
-    setIsOnline(navigator.onLine);
-
     const handleOnline = () => {
       setIsOnline(true);
       toast.success("Conexão de internet restaurada! Sincronizando vendas locais...");
@@ -136,32 +227,20 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
     };
   }, []);
 
-  // Sincroniza a prop products caso ela mude de fora
-  useEffect(() => {
-    setLocalProducts(products);
-  }, [products]);
-
-  // Efeito reativo para disparar a sincronização quando a internet voltar
-  useEffect(() => {
-    if (isOnline) {
-      syncOfflineSales();
-    }
-  }, [isOnline]);
-
   // Executa a sincronização de vendas offline gravadas no localStorage
-  const syncOfflineSales = async () => {
+  const syncOfflineSales = useCallback(async () => {
     try {
       const offlineSalesStr = localStorage.getItem("pdv_offline_sales");
       if (!offlineSalesStr) return;
 
-      const offlineSales = JSON.parse(offlineSalesStr) as any[];
+      const offlineSales = JSON.parse(offlineSalesStr) as OfflineSale[];
       if (offlineSales.length === 0) return;
 
       console.log(`[Offline Sync] Sincronizando ${offlineSales.length} vendas pendentes...`);
       toast.loading(`Sincronizando ${offlineSales.length} venda(s) offline com a nuvem...`, { id: "sync-toast" });
 
       let successCount = 0;
-      const remainingSales: any[] = [];
+      const remainingSales: OfflineSale[] = [];
 
       for (const sale of offlineSales) {
         try {
@@ -203,7 +282,14 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
       console.error("[Offline Sync] Erro geral na sincronização:", error);
       toast.dismiss("sync-toast");
     }
-  };
+  }, [router]);
+
+  // Efeito reativo para disparar a sincronização quando a internet voltar
+  useEffect(() => {
+    if (isOnline) {
+      syncOfflineSales();
+    }
+  }, [isOnline, syncOfflineSales]);
 
   // Funções de controle de tela cheia
   const enterFullscreen = () => {
@@ -243,10 +329,7 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
 
   // Monitora a saída indesejada de tela cheia pelo usuário (ex: apertar Esc)
   useEffect(() => {
-    if (!isKioskMode) {
-      setShowKioskFullscreenOverlay(false);
-      return;
-    }
+    if (!isKioskMode) return;
 
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement) {
@@ -257,10 +340,6 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
     };
 
     document.addEventListener("fullscreenchange", handleFullscreenChange);
-    // Checa o estado atual de carregamento
-    if (!document.fullscreenElement) {
-      setShowKioskFullscreenOverlay(true);
-    }
 
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
@@ -341,6 +420,7 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
           setIsKioskMode(false);
           localStorage.setItem("pdv_kiosk_mode", "false");
           exitFullscreen();
+          setShowKioskFullscreenOverlay(false);
           toast.success("Modo Kiosk desativado!");
         } else {
           // Executa a ação bloqueada que o usuário havia tentado
@@ -780,15 +860,27 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
           );
 
           // Renderiza o recibo digital offline simulando dados da API
-          const mockReceiptData = {
+          const mockReceiptData: SaleReceipt = {
             id: offlineSaleId,
-            storeName: session.storeName || "Filial Local",
-            user: { name: session.name },
+            storeId: session.storeId || "",
+            store: {
+              name: session.storeName || "Filial Local",
+              address: "Venda Offline (Local)",
+              phone: "-",
+              cnpj: "-",
+            },
+            userId: session.id,
+            user: {
+              name: session.name,
+              role: session.role,
+            },
+            tenantId: session.tenantId,
             saleDate: new Date().toISOString(),
             subtotal: totals.subtotal,
             discount: discount,
             total: totals.total,
             paymentMethod: paymentMethod,
+            paymentStatus: "APROVADO",
             receivedAmount: receivedCents > 0 ? receivedCents : totals.total,
             changeAmount: changeCents,
             notes: "Venda Offline. Será sincronizada automaticamente ao restabelecer a internet.",
@@ -832,7 +924,7 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
           if (!isElectronic) {
             // FLUXO DINHEIRO: Concluído direto
             toast.success("Venda finalizada com sucesso!");
-            setReceiptData(result.receiptData);
+            setReceiptData(result.receiptData as SaleReceipt);
             setIsCheckoutOpen(false);
             setIsReceiptOpen(true);
             setCart([]);
@@ -926,15 +1018,27 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
             })
           );
 
-          const mockReceiptData = {
+          const mockReceiptData: SaleReceipt = {
             id: offlineSaleId,
-            storeName: session.storeName || "Filial Local",
-            user: { name: session.name },
+            storeId: session.storeId || "",
+            store: {
+              name: session.storeName || "Filial Local",
+              address: "Venda Offline (Local)",
+              phone: "-",
+              cnpj: "-",
+            },
+            userId: session.id,
+            user: {
+              name: session.name,
+              role: session.role,
+            },
+            tenantId: session.tenantId,
             saleDate: new Date().toISOString(),
             subtotal: totals.subtotal,
             discount: discount,
             total: totals.total,
             paymentMethod: paymentMethod,
+            paymentStatus: "APROVADO",
             receivedAmount: receivedCents > 0 ? receivedCents : totals.total,
             changeAmount: changeCents,
             notes: "Conexão instável. Venda offline gravada com sucesso e protegida contra quedas.",
@@ -1759,7 +1863,7 @@ export default function PdvClient({ session, products, breadConfig }: PdvClientP
                   <span className="w-1/6 text-right">TOTAL</span>
                 </div>
 
-                {receiptData.items?.map((item: any) => (
+                {receiptData.items?.map((item: SaleReceiptItem) => (
                   <div key={item.id} className="flex text-[10px] leading-tight">
                     <div className="w-1/2 flex flex-col">
                       <span className="font-bold">{item.product?.name}</span>
