@@ -63,6 +63,7 @@ export default function OwnerNavbar({ session }: OwnerNavbarProps) {
               <Link
                 key={item.href}
                 href={item.href}
+                prefetch={false}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all duration-300 border select-none ${
                   isActive
                     ? "bg-gradient-to-r from-amber-500/15 to-orange-500/15 border-amber-500/40 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.05)] scale-[1.02]"

@@ -46,19 +46,20 @@ export async function setSession(user: {
 }): Promise<void> {
   const cookieStore = await cookies();
   
-  let storeName = null;
-  if (user.storeId) {
-    const store = await prisma.store.findUnique({
-      where: { id: user.storeId },
+  const [store, tenant] = await Promise.all([
+    user.storeId
+      ? prisma.store.findUnique({
+          where: { id: user.storeId },
+          select: { name: true },
+        })
+      : Promise.resolve(null),
+    prisma.tenant.findUnique({
+      where: { id: user.tenantId },
       select: { name: true },
-    });
-    storeName = store?.name || null;
-  }
+    }),
+  ]);
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: user.tenantId },
-    select: { name: true },
-  });
+  const storeName = store?.name || null;
   const tenantName = tenant?.name || "Rede Padaria";
 
   const sessionData: UserSession = {

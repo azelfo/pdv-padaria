@@ -17,28 +17,28 @@ export default async function AdminUsersPage() {
     redirect("/pdv");
   }
 
-  // Busca todos os usuários vinculados ao Tenant do Dono ordenados por nome
-  const users = await prisma.user.findMany({
-    where: { 
-      tenantId: session.tenantId,
-    },
-    include: {
-      store: {
-        select: { name: true },
+  // Busca todos os usuários e lojas ativas vinculadas ao Tenant do Dono em paralelo
+  const [users, stores] = await Promise.all([
+    prisma.user.findMany({
+      where: { 
+        tenantId: session.tenantId,
       },
-    },
-    orderBy: { name: "asc" },
-  });
-
-  // Busca todas as lojas ativas exclusivas deste Tenant SaaS para preenchimento de selects no formulário
-  const stores = await prisma.store.findMany({
-    where: { 
-      active: true,
-      tenantId: session.tenantId,
-    },
-    select: { id: true, name: true },
-    orderBy: { name: "asc" },
-  });
+      include: {
+        store: {
+          select: { name: true },
+        },
+      },
+      orderBy: { name: "asc" },
+    }),
+    prisma.store.findMany({
+      where: { 
+        active: true,
+        tenantId: session.tenantId,
+      },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   // Formata os dados para o componente cliente
   const formattedUsers = users.map((u) => ({

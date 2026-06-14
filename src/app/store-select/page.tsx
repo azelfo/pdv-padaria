@@ -19,10 +19,19 @@ export default async function StoreSelectPage() {
     redirect("/login");
   }
 
-  // Validação de segurança: se o usuário logado no cookie não existir mais no banco (ex: pós-seed reset)
-  const userExists = await prisma.user.findUnique({
-    where: { id: session.id, active: true },
-  });
+  // Busca em paralelo o usuário logado e as lojas ativas exclusivas do Tenant SaaS
+  const [userExists, stores] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.id, active: true },
+    }),
+    prisma.store.findMany({
+      where: { 
+        active: true,
+        tenantId: session.tenantId,
+      },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
   if (!userExists) {
     redirect("/login");
@@ -32,15 +41,6 @@ export default async function StoreSelectPage() {
   if (session.role !== "DONO" && session.storeId) {
     redirect("/pdv");
   }
-
-  // Busca todas as lojas ativas exclusivas deste Tenant SaaS
-  const stores = await prisma.store.findMany({
-    where: { 
-      active: true,
-      tenantId: session.tenantId,
-    },
-    orderBy: { name: "asc" },
-  });
 
   // Função para fazer logout
   async function handleLogout() {

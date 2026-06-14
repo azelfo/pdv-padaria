@@ -16,15 +16,6 @@ export default async function PdvEstoquePage() {
     redirect("/login");
   }
 
-  // Validação de segurança: se o usuário logado no cookie não existir mais no banco (ex: pós-seed reset)
-  const userExists = await prisma.user.findUnique({
-    where: { id: session.id, active: true },
-  });
-
-  if (!userExists) {
-    redirect("/login");
-  }
-
   // Se for o Dono e não tiver loja vinculada, redireciona para a seleção de lojas
   if (session.role === "DONO" && !session.storeId) {
     redirect("/store-select");
@@ -40,14 +31,59 @@ export default async function PdvEstoquePage() {
 
   const activeStoreId = session.storeId;
 
-  // Validação de segurança: se a loja correspondente ao cookie não existir ou for de outro inquilino SaaS
-  const storeExists = await prisma.store.findFirst({
-    where: { 
-      id: activeStoreId, 
-      active: true,
-      tenantId: session.tenantId,
-    },
-  });
+  // Executa todas as consultas ao banco de dados em paralelo
+  const [userExists, storeExists, storeProducts, recentMovements] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.id, active: true },
+    }),
+    prisma.store.findFirst({
+      where: { 
+        id: activeStoreId, 
+        active: true,
+        tenantId: session.tenantId,
+      },
+    }),
+    prisma.storeProduct.findMany({
+      where: {
+        storeId: activeStoreId,
+        product: {
+          active: true,
+        },
+      },
+      include: {
+        product: {
+          include: {
+            category: true,
+          },
+        },
+      },
+      orderBy: {
+        product: {
+          name: "asc",
+        },
+      },
+    }),
+    prisma.stockMovement.findMany({
+      where: { storeId: activeStoreId },
+      include: {
+        product: {
+          select: { name: true, unitMeasure: true },
+        },
+        user: {
+          select: { name: true },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 20,
+    }),
+  ]);
+
+  // Validações pós-busca paralela
+  if (!userExists) {
+    redirect("/login");
+  }
 
   if (!storeExists) {
     if (session.role === "DONO") {
@@ -56,46 +92,6 @@ export default async function PdvEstoquePage() {
       redirect("/login");
     }
   }
-
-
-  // Busca todos os produtos ativos da loja ativa
-  const storeProducts = await prisma.storeProduct.findMany({
-    where: {
-      storeId: activeStoreId,
-      product: {
-        active: true,
-      },
-    },
-    include: {
-      product: {
-        include: {
-          category: true,
-        },
-      },
-    },
-    orderBy: {
-      product: {
-        name: "asc",
-      },
-    },
-  });
-
-  // Busca o histórico recente de movimentações desta loja (últimas 20)
-  const recentMovements = await prisma.stockMovement.findMany({
-    where: { storeId: activeStoreId },
-    include: {
-      product: {
-        select: { name: true, unitMeasure: true },
-      },
-      user: {
-        select: { name: true },
-      },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 20,
-  });
 
   // Formata os produtos para o Client Component
   const formattedProducts = storeProducts.map((sp) => ({

@@ -17,70 +17,67 @@ export default async function PdvDashboardPage() {
     redirect("/pdv");
   }
 
-  // Validação de segurança: se o usuário logado no cookie não existir mais no banco
-  const userExists = await prisma.user.findUnique({
-    where: { id: session.id, active: true },
-  });
-
-  if (!userExists) {
-    redirect("/login");
-  }
-
   // Se o Dono não tiver loja vinculada no cookie, redireciona para a seleção de lojas
   if (!session.storeId) {
     redirect("/store-select");
   }
 
-  // Validação de segurança: se a loja correspondente ao cookie não existir ou for de outro inquilino SaaS
-  const storeExists = await prisma.store.findFirst({
-    where: { 
-      id: session.storeId, 
-      active: true,
-      tenantId: session.tenantId,
-    },
-  });
-
-  if (!storeExists) {
-    redirect("/store-select");
-  }
-
-  // Busca todas as lojas ativas exclusivas deste Tenant SaaS para o filtro do dashboard
-  const stores = await prisma.store.findMany({
-    where: { 
-      active: true,
-      tenantId: session.tenantId,
-    },
-    select: { id: true, name: true },
-    orderBy: { name: "asc" },
-  });
-
-  // Busca todas as vendas APROVADAS exclusivas do Tenant ativo no banco
-  const sales = await prisma.sale.findMany({
-    where: {
-      paymentStatus: "APROVADO",
-      tenantId: session.tenantId,
-    },
-    include: {
-      store: {
-        select: { name: true },
+  // Executa todas as consultas ao banco de dados em paralelo
+  const [userExists, storeExists, stores, sales] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.id, active: true },
+    }),
+    prisma.store.findFirst({
+      where: { 
+        id: session.storeId, 
+        active: true,
+        tenantId: session.tenantId,
       },
-      user: {
-        select: { name: true },
+    }),
+    prisma.store.findMany({
+      where: { 
+        active: true,
+        tenantId: session.tenantId,
       },
-      items: {
-        include: {
-          product: {
-            include: {
-              category: true,
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.sale.findMany({
+      where: {
+        paymentStatus: "APROVADO",
+        tenantId: session.tenantId,
+      },
+      include: {
+        store: {
+          select: { name: true },
+        },
+        user: {
+          select: { name: true },
+        },
+        items: {
+          include: {
+            product: {
+              include: {
+                category: true,
+              },
             },
           },
         },
       },
-    },
-    orderBy: {
-      saleDate: "desc",
-    },
-  });
+      orderBy: {
+        saleDate: "desc",
+      },
+    }),
+  ]);
+
+  // Validações pós-busca paralela
+  if (!userExists) {
+    redirect("/login");
+  }
+
+  if (!storeExists) {
+    redirect("/store-select");
+  }
 
   // Formata as vendas para enviar ao Client Component de forma segura (sem objetos de data)
   const formattedSales = sales.map((sale) => ({

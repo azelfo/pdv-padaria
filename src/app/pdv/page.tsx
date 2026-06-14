@@ -17,15 +17,6 @@ export default async function PdvPage() {
     redirect("/login");
   }
 
-  // Validação de segurança: se o usuário logado no cookie não existir mais no banco (ex: pós-seed reset)
-  const userExists = await prisma.user.findUnique({
-    where: { id: session.id, active: true },
-  });
-
-  if (!userExists) {
-    redirect("/login");
-  }
-
   // Dono precisa selecionar a loja antes
   if (session.role === "DONO" && !session.storeId) {
     redirect("/store-select");
@@ -37,14 +28,40 @@ export default async function PdvPage() {
 
   const activeStoreId = session.storeId;
 
-  // Validação de segurança: se a loja correspondente ao cookie não existir ou for de outro inquilino SaaS
-  const storeExists = await prisma.store.findFirst({
-    where: { 
-      id: activeStoreId, 
-      active: true,
-      tenantId: session.tenantId,
-    },
-  });
+  // Executa todas as consultas ao banco de dados em paralelo
+  const [userExists, storeExists, products, breadConfig] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: session.id, active: true },
+    }),
+    prisma.store.findFirst({
+      where: { 
+        id: activeStoreId, 
+        active: true,
+        tenantId: session.tenantId,
+      },
+    }),
+    prisma.product.findMany({
+      where: { 
+        active: true,
+        tenantId: session.tenantId,
+      },
+      include: {
+        category: true,
+        stores: {
+          where: { storeId: activeStoreId },
+        },
+      },
+      orderBy: { name: "asc" },
+    }),
+    prisma.breadConfig.findUnique({
+      where: { storeId: activeStoreId },
+    }),
+  ]);
+
+  // Validações de segurança após as consultas paralelas
+  if (!userExists) {
+    redirect("/login");
+  }
 
   if (!storeExists) {
     if (session.role === "DONO") {
@@ -53,27 +70,6 @@ export default async function PdvPage() {
       redirect("/login");
     }
   }
-
-
-  // Busca todos os produtos ativos vinculados ao estoque da loja ativa do Tenant ativo
-  const products = await prisma.product.findMany({
-    where: { 
-      active: true,
-      tenantId: session.tenantId,
-    },
-    include: {
-      category: true,
-      stores: {
-        where: { storeId: activeStoreId },
-      },
-    },
-    orderBy: { name: "asc" },
-  });
-
-  // Busca a configuração do pão francês para a loja ativa
-  const breadConfig = await prisma.breadConfig.findUnique({
-    where: { storeId: activeStoreId },
-  });
 
   // Formata os produtos para o frontend simplificar o uso do estoque
   const formattedProducts = products.map((p) => {
