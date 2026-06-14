@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import PdvClient from "./pdv-client";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Caixa PDV - PADARIA",
 };

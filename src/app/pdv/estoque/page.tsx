@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import EstoqueClient from "./estoque-client";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Painel de Estoque - PADARIA",
 };

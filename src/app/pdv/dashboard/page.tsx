@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import DashboardClient from "./dashboard-client";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Dashboard Financeiro - PADARIA",
 };

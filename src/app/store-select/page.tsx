@@ -5,6 +5,8 @@ import { LogOut } from "lucide-react";
 import StoreSelectClient from "./store-select-client";
 import { destroySession } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Selecionar Loja - PADARIA",
 };

@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import UsersClient from "./users-client";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Gestão de Funcionários - PADARIA",
 };
