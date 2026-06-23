@@ -36,6 +36,13 @@ namespace PdvPadaria.Services
         {
             try
             {
+                // WAL + busy_timeout: permite a conexão de vendas e a de sincronização lerem/escreverem
+                // concorrentemente sem "database is locked" nem corromper o arquivo.
+                // Ambos PRAGMAs retornam UMA linha → ler com ExecuteScalarAsync.
+                // (ExecuteAsync lança "not an error" no sqlite-net porque recebe um SQLITE_ROW inesperado.)
+                await _database.ExecuteScalarAsync<string>("PRAGMA journal_mode=WAL");
+                await _database.ExecuteScalarAsync<int>("PRAGMA busy_timeout=5000");
+
                 // Cria as tabelas se elas não existirem no dev.db local
                 await _database.CreateTableAsync<User>();
                 await _database.CreateTableAsync<Category>();
@@ -120,7 +127,7 @@ namespace PdvPadaria.Services
                         UnitMeasure = "UN",
                         CategoryId = "cat-producao-propria",
                         TenantId = tenantId,
-                        LocalStockQuantity = 300,
+                        LocalStockQuantity = 0, // semente legada começa em 0; o estoque real vem da nuvem/contagem
                         Active = true
                     });
                 }
@@ -139,7 +146,7 @@ namespace PdvPadaria.Services
                         UnitMeasure = "UN",
                         CategoryId = "cat-producao-propria",
                         TenantId = tenantId,
-                        LocalStockQuantity = 300,
+                        LocalStockQuantity = 0, // semente legada começa em 0; o estoque real vem da nuvem/contagem
                         Active = true
                     });
                 }
@@ -172,7 +179,9 @@ namespace PdvPadaria.Services
         // Getter para a conexão síncrona usada no serviço de sincronização
         public SQLiteConnection GetSyncConnection()
         {
-            return new SQLiteConnection(DbPath, SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create | SQLiteOpenFlags.SharedCache);
+            var conn = new SQLiteConnection(DbPath, SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create | SQLiteOpenFlags.SharedCache);
+            conn.BusyTimeout = TimeSpan.FromSeconds(5);
+            return conn;
         }
 
         #region Métodos de Conveniência (Operações Básicas)

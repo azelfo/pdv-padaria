@@ -11,21 +11,35 @@ using PdvPadaria.Models;
 
 namespace PdvPadaria.Services
 {
-    public class SyncService
+    public class SyncService : IDisposable
     {
         public string LastError { get; private set; } = string.Empty;
         private readonly SQLiteConnection _dbConnection;
-        private readonly HttpClient _httpClient;
+
+        // HttpClient ÚNICO e compartilhado entre todos os syncs. Um SyncService é criado a cada
+        // ciclo de 60s; criar um HttpClient por ciclo esgota sockets (TIME_WAIT). Estático resolve.
+        private static readonly HttpClient _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        };
+
         private string _supabaseUrl = string.Empty;
         private string _supabaseAnonKey = string.Empty;
 
         public SyncService(SQLiteConnection dbConnection)
         {
             _dbConnection = dbConnection;
-            _httpClient = new HttpClient();
-            _httpClient.Timeout = TimeSpan.FromSeconds(15);
-            
+            // Espera até 5s por locks (concorrência com a conexão de vendas) em vez de falhar na hora.
+            _dbConnection.BusyTimeout = TimeSpan.FromSeconds(5);
+
             CarregarConfiguracao();
+        }
+
+        // Fecha a conexão SQLite criada para este ciclo de sync (evita vazar handles).
+        public void Dispose()
+        {
+            try { _dbConnection?.Close(); } catch { }
+            try { _dbConnection?.Dispose(); } catch { }
         }
 
         // Carrega configurações diretamente do arquivo .env local para falar com o Supabase
@@ -77,24 +91,11 @@ namespace PdvPadaria.Services
                     movementsToSend.AddRange(movements);
                 }
 
-                // 3. Envia os dados sequencialmente respeitando a integridade das tabelas (Pai -> Filhas)
-                // Envia para a tabela Sale
-                bool saleSuccess = await PostToSupabaseAsync("Sale", salesToSend);
-                if (!saleSuccess) return false;
-
-                // Envia para a tabela SaleItem
-                if (itemsToSend.Count > 0)
-                {
-                    bool itemsSuccess = await PostToSupabaseAsync("SaleItem", itemsToSend);
-                    if (!itemsSuccess) return false;
-                }
-
-                // Envia para a tabela StockMovement
-                if (movementsToSend.Count > 0)
-                {
-                    bool movementsSuccess = await PostToSupabaseAsync("StockMovement", movementsToSend);
-                    if (!movementsSuccess) return false;
-                }
+                // 3. Envia tudo num único payload para a função RPC server-side.
+                //    push_vendas grava as 3 tabelas em uma transação (Pai -> Filhas),
+                //    ignorando RLS (security definer). A anon key não escreve direto.
+                bool pushSuccess = await PushVendasRpcAsync(salesToSend, itemsToSend, movementsToSend);
+                if (!pushSuccess) return false;
 
                 // 4. Se tudo deu certo, atualiza os status no SQLite local de forma transacional e atômica
                 _dbConnection.RunInTransaction(() =>
@@ -127,33 +128,52 @@ namespace PdvPadaria.Services
             }
         }
 
-        // Método genérico para fazer POST diretamente na API REST do Supabase
-        private async Task<bool> PostToSupabaseAsync(string tableName, object payload)
+        // Envia vendas/itens/movimentos num único payload para a função RPC push_vendas.
+        // A função grava server-side (security definer), então a anon key não precisa
+        // de permissão de escrita direta nas tabelas — fica só com EXECUTE na função.
+        private async Task<bool> PushVendasRpcAsync(List<Sale> sales, List<SaleItem> items, List<StockMovement> movements)
         {
             try
             {
+                // Token da loja: o servidor carimba storeId/tenantId a partir dele (ignora o payload).
+                string storeToken = EnvService.Get("STORE_SYNC_TOKEN");
+                if (string.IsNullOrEmpty(storeToken))
+                {
+                    LastError = "STORE_SYNC_TOKEN ausente no .env desta máquina.";
+                    return false;
+                }
+
                 // Mapeia classes C# (PascalCase) para colunas do Postgres (camelCase)
                 var settings = new JsonSerializerSettings
                 {
                     ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver()
                 };
-                var requestBody = JsonConvert.SerializeObject(payload, settings);
+                var body = new
+                {
+                    p_payload = new
+                    {
+                        sales = sales,
+                        items = items,
+                        movements = movements
+                    },
+                    p_token = storeToken
+                };
+                var requestBody = JsonConvert.SerializeObject(body, settings);
                 var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
 
-                var url = $"{_supabaseUrl.TrimEnd('/')}/rest/v1/{tableName}";
+                var url = $"{_supabaseUrl.TrimEnd('/')}/rest/v1/rpc/push_vendas";
                 using (var request = new HttpRequestMessage(HttpMethod.Post, url))
                 {
                     request.Content = content;
                     request.Headers.Add("apikey", _supabaseAnonKey);
                     request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
-                    request.Headers.Add("Prefer", "resolution=merge-duplicates"); // Resolve colisões se retransmitir
 
                     var response = await _httpClient.SendAsync(request);
                     if (!response.IsSuccessStatusCode)
                     {
                         string errorBody = await response.Content.ReadAsStringAsync();
-                        LastError = $"Erro HTTP {response.StatusCode} no POST {tableName}: {errorBody}";
-                        System.Diagnostics.Debug.WriteLine($"[Supabase POST Error]: {LastError}");
+                        LastError = $"Erro HTTP {response.StatusCode} no push_vendas: {errorBody}";
+                        System.Diagnostics.Debug.WriteLine($"[Supabase RPC Error]: {LastError}");
                         return false;
                     }
                     return true;
@@ -162,7 +182,76 @@ namespace PdvPadaria.Services
             catch (Exception ex)
             {
                 LastError = ex.Message;
-                System.Diagnostics.Debug.WriteLine($"[Supabase POST Error for {tableName}]: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_vendas Error]: {ex.Message}");
+                return false;
+            }
+        }
+
+        #endregion
+
+        #region Métodos de Push de Estoque (envia a "foto" do estoque local da loja para a nuvem)
+
+        /// <summary>
+        /// Envia o estoque local atual desta loja para a nuvem (upsert em StoreProduct via RPC push_estoque).
+        /// Como cada loja tem 1 caixa, o estoque local é a fonte da verdade dela — o dono lê esses
+        /// valores no painel consolidado. É uma "foto" absoluta (não um delta), então é idempotente
+        /// e nunca duplica baixa, mesmo que rode várias vezes. Produtos que não existem na nuvem
+        /// são ignorados server-side (a função filtra por FK), evitando erro com itens só-locais.
+        /// </summary>
+        public async Task<bool> PushStockSnapshotAsync(string tenantId, string storeId)
+        {
+            if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
+                return false;
+            if (string.IsNullOrEmpty(storeId))
+                return false;
+
+            // Token secreto da loja (autoriza a escrita do estoque na nuvem; o servidor deriva a loja
+            // dele, ignorando qualquer storeId do payload). Máquina ainda sem token no .env pula sem erro.
+            string storeToken = EnvService.Get("STORE_SYNC_TOKEN");
+            if (string.IsNullOrEmpty(storeToken))
+                return true;
+
+            try
+            {
+                var products = _dbConnection.Table<Product>().ToList();
+                if (products.Count == 0) return true;
+
+                var snapshot = products.Select(p => new
+                {
+                    ProductId = p.Id,
+                    Quantity = p.LocalStockQuantity
+                }).ToList();
+
+                var settings = new JsonSerializerSettings
+                {
+                    ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver()
+                };
+                var body = new { p_payload = new { stock = snapshot }, p_token = storeToken };
+                var requestBody = JsonConvert.SerializeObject(body, settings);
+                var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+
+                var url = $"{_supabaseUrl.TrimEnd('/')}/rest/v1/rpc/push_estoque";
+                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    request.Content = content;
+                    request.Headers.Add("apikey", _supabaseAnonKey);
+                    request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
+
+                    var response = await _httpClient.SendAsync(request);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        string errorBody = await response.Content.ReadAsStringAsync();
+                        LastError = $"Erro HTTP {response.StatusCode} no push_estoque: {errorBody}";
+                        System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_estoque Error]: {LastError}");
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                System.Diagnostics.Debug.WriteLine($"[Push Estoque Error]: {ex.Message}");
                 return false;
             }
         }
@@ -188,43 +277,33 @@ namespace PdvPadaria.Services
                 var categoriesTask = GetFromSupabaseAsync<Category>($"Category?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
                 var productsTask = GetFromSupabaseAsync<Product>($"Product?tenantId=eq.{Uri.EscapeDataString(tenantId)}&active=eq.true");
                 var storeProductsTask = GetFromSupabaseAsync<StoreProductDto>($"StoreProduct?storeId=eq.{Uri.EscapeDataString(storeId)}");
-                var usersTask = GetFromSupabaseAsync<User>($"User?tenantId=eq.{Uri.EscapeDataString(tenantId)}&active=eq.true");
                 var breadConfigsTask = GetFromSupabaseAsync<BreadConfig>($"BreadConfig?storeId=eq.{Uri.EscapeDataString(storeId)}&active=eq.true");
 
-                // Aguarda a conclusão simultânea de todas as tarefas de rede
-                await Task.WhenAll(categoriesTask, productsTask, storeProductsTask, usersTask, breadConfigsTask);
+                // Aguarda a conclusão simultânea de todas as tarefas de rede.
+                // Usuários NÃO são mais puxados: o login virou server-side (RPC login_caixa)
+                // e a anon key não tem leitura na tabela User. O login offline passa a
+                // depender do admin semeado localmente e dos operadores que já logaram online.
+                await Task.WhenAll(categoriesTask, productsTask, storeProductsTask, breadConfigsTask);
 
                 var categories = await categoriesTask;
                 var products = await productsTask;
                 var storeProducts = await storeProductsTask;
-                var users = await usersTask;
                 var breadConfigs = await breadConfigsTask;
 
-                // Se alguma consulta crítica falhar de forma geral por rede, cancela para não salvar dados incompletos
-                if (products == null || users == null)
+                // Se a consulta crítica de produtos falhar por rede, cancela para não salvar dados incompletos
+                if (products == null)
                 {
-                    System.Diagnostics.Debug.WriteLine("[Pull Error]: Falha ao carregar tabelas de produtos ou usuários da nuvem.");
+                    System.Diagnostics.Debug.WriteLine("[Pull Error]: Falha ao carregar a tabela de produtos da nuvem.");
                     return false;
                 }
 
-                // 2. Mescla as informações de estoque físico da loja nos produtos recebidos
-                if (storeProducts != null && products != null)
-                {
-                    var stockMap = storeProducts.ToDictionary(sp => sp.ProductId, sp => sp);
-                    foreach (var prod in products)
-                    {
-                        if (stockMap.TryGetValue(prod.Id, out var sp))
-                        {
-                            prod.LocalStockQuantity = sp.Quantity;
-                            prod.MinStock = sp.MinStock;
-                        }
-                        else
-                        {
-                            prod.LocalStockQuantity = 0;
-                            prod.MinStock = 0;
-                        }
-                    }
-                }
+                // 2. Mapa de estoque da nuvem — usado SOMENTE para semear produtos novos.
+                //    A loja é a dona do próprio estoque: produto que já existe localmente
+                //    NÃO tem o estoque sobrescrito pela nuvem (senão a venda offline "voltava"
+                //    a cada pull). A aplicação real desse mapa acontece na transação abaixo.
+                var stockMap = (storeProducts ?? new List<StoreProductDto>())
+                    .GroupBy(sp => sp.ProductId)
+                    .ToDictionary(g => g.Key, g => g.First());
 
                 // 3. Insere/Atualiza os cadastros locais de forma transacional e atômica
                 _dbConnection.RunInTransaction(() =>
@@ -238,21 +317,39 @@ namespace PdvPadaria.Services
                         }
                     }
 
-                    // Sincroniza Produtos e seus estoques
+                    // Sincroniza Produtos. O ESTOQUE é tratado à parte para a loja ser a fonte da verdade:
+                    //  - produto JÁ existente: atualiza só os campos de CADASTRO (nome, preço, etc.) via
+                    //    UPDATE seletivo — NUNCA reescreve a coluna de estoque (elimina a corrida com a
+                    //    venda que rodava read-modify-write numa conexão separada);
+                    //  - produto NOVO: insere semeando o estoque com o valor da nuvem desta loja.
                     if (products != null)
                     {
                         foreach (var prod in products)
                         {
-                            _dbConnection.InsertOrReplace(prod);
-                        }
-                    }
-
-                    // Sincroniza Operadores e Usuários
-                    if (users != null)
-                    {
-                        foreach (var u in users)
-                        {
-                            _dbConnection.InsertOrReplace(u);
+                            var existing = _dbConnection.Find<Product>(prod.Id);
+                            if (existing != null)
+                            {
+                                _dbConnection.Execute(
+                                    "UPDATE Product SET Name=?, Barcode=?, PriceSale=?, PriceCost=?, Type=?, " +
+                                    "UnitMeasure=?, Active=?, ImageUrl=?, CategoryId=?, TenantId=?, UpdatedAt=? WHERE Id=?",
+                                    prod.Name, prod.Barcode, prod.PriceSale, prod.PriceCost, prod.Type,
+                                    prod.UnitMeasure, prod.Active, prod.ImageUrl, prod.CategoryId, prod.TenantId,
+                                    DateTime.Now, prod.Id);
+                            }
+                            else
+                            {
+                                if (stockMap.TryGetValue(prod.Id, out var sp))
+                                {
+                                    prod.LocalStockQuantity = sp.Quantity;
+                                    prod.MinStock = sp.MinStock;
+                                }
+                                else
+                                {
+                                    prod.LocalStockQuantity = 0;
+                                    prod.MinStock = 0;
+                                }
+                                _dbConnection.Insert(prod);
+                            }
                         }
                     }
 

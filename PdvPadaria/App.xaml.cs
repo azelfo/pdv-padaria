@@ -28,7 +28,7 @@ namespace PdvPadaria
                     {
                         try
                         {
-                            var syncService = new SyncService(Database.GetSyncConnection());
+                            using var syncService = new SyncService(Database.GetSyncConnection());
                             await syncService.PullUpdatesAsync(tenantId, storeId);
                         }
                         catch

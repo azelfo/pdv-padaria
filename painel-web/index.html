@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Painel da Rede — Padaria</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#1a1d24; --card2:#21262f; --line:#2b313c;
+    --text:#e5e7eb; --muted:#9aa3b2; --accent:#F59E0B; --green:#22c55e; --red:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  body{background:var(--bg);color:var(--text);min-height:100vh;padding:16px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:20px;font-weight:700;margin-bottom:2px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .accent{color:var(--accent)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 6px}
+  input{width:100%;padding:12px 14px;background:var(--card2);border:1px solid var(--line);border-radius:10px;color:var(--text);font-size:15px}
+  input:focus{outline:none;border-color:var(--accent)}
+  button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:14px}
+  .btn-primary{width:100%;padding:13px;background:var(--accent);color:#1a1205;margin-top:16px}
+  .btn-primary:disabled{opacity:.6;cursor:default}
+  .periods{display:flex;gap:8px;margin-bottom:14px}
+  .periods button{flex:1;padding:10px;background:var(--card);border:1px solid var(--line);color:var(--muted)}
+  .periods button.on{background:var(--accent);color:#1a1205;border-color:var(--accent)}
+  .totais{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;text-align:center}
+  .kpi .v{font-size:20px;font-weight:700;color:var(--accent)}
+  .kpi .l{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+  .loja{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}
+  .loja:last-child{border-bottom:none}
+  .loja .nome{font-weight:600;font-size:15px}
+  .loja .meta{font-size:12px;color:var(--muted);margin-top:3px}
+  .loja .fat{font-size:17px;font-weight:700}
+  .badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:6px;margin-left:6px}
+  .badge.alerta{background:rgba(239,68,68,.15);color:var(--red)}
+  .sec-title{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+  .top{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .top:last-child{border-bottom:none}
+  .top .q{color:var(--muted);font-size:12px}
+  .err{background:rgba(239,68,68,.12);color:#fca5a5;border:1px solid rgba(239,68,68,.3);padding:11px 14px;border-radius:10px;font-size:14px;margin-top:12px}
+  .hidden{display:none}
+  .row{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .link{color:var(--muted);font-size:13px;background:none;padding:6px 4px}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Painel da <span class="accent">Rede</span></h1>
+  <div class="sub">Visão consolidada das suas padarias</div>
+
+  <!-- LOGIN -->
+  <div id="loginCard" class="card">
+    <label>E-mail do dono</label>
+    <input id="email" type="email" placeholder="dono@padaria.com.br" autocomplete="username" />
+    <label>Senha</label>
+    <input id="senha" type="password" placeholder="sua senha" autocomplete="current-password" />
+    <button id="entrarBtn" class="btn-primary">Entrar</button>
+    <div id="loginErr" class="err hidden"></div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="dash" class="hidden">
+    <div class="row">
+      <div class="muted" id="oi"></div>
+      <button class="link" id="sairBtn">Sair</button>
+    </div>
+
+    <div class="periods">
+      <button data-d="0" class="on">Hoje</button>
+      <button data-d="7">7 dias</button>
+      <button data-d="30">30 dias</button>
+    </div>
+
+    <div class="totais">
+      <div class="kpi"><div class="v" id="tFat">—</div><div class="l">Faturamento</div></div>
+      <div class="kpi"><div class="v" id="tVendas">—</div><div class="l">Vendas</div></div>
+      <div class="kpi"><div class="v" id="tLojas">—</div><div class="l">Lojas</div></div>
+    </div>
+
+    <div class="card">
+      <div class="sec-title">Por loja</div>
+      <div id="lojas"></div>
+    </div>
+
+    <div class="card">
+      <div class="sec-title">Produtos mais vendidos</div>
+      <div id="top"></div>
+    </div>
+
+    <div id="dashErr" class="err hidden"></div>
+    <div class="sub" style="text-align:center" id="atualizado"></div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = "https://aezwtbzyremthqdkldzl.supabase.co";
+const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlend0Ynp5cmVtdGhxZGtsZHpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0NDI4NjEsImV4cCI6MjA5NzAxODg2MX0.kShlLQFGG8PeMpBPbB0Lfbu4bbB-pMdqNO-yOWej1us";
+
+let creds = { email:"", senha:"" };
+let periodoDias = 0;
+
+const $ = id => document.getElementById(id);
+const brl = c => (c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+
+function pad(n){return String(n).padStart(2,'0')}
+function fmtLocal(d){ // YYYY-MM-DDTHH:MM:SS em hora local (casa com saleDate "naive" do banco)
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+}
+function periodo(){
+  const ate = new Date();
+  const de = new Date();
+  if(periodoDias===0){ de.setHours(0,0,0,0); }
+  else { de.setDate(de.getDate()-periodoDias); de.setHours(0,0,0,0); }
+  const fim = new Date(ate); fim.setHours(23,59,59,999);
+  return { de: fmtLocal(de), ate: fmtLocal(fim) };
+}
+
+async function buscar(){
+  const p = periodo();
+  $('dashErr').classList.add('hidden');
+  const res = await fetch(SUPABASE_URL+"/rest/v1/rpc/get_dashboard_rede",{
+    method:"POST",
+    headers:{ "apikey":ANON_KEY, "Authorization":"Bearer "+ANON_KEY, "Content-Type":"application/json" },
+    body: JSON.stringify({ p_email:creds.email, p_password:creds.senha, p_from:p.de, p_to:p.ate })
+  });
+  if(!res.ok){ throw new Error("Falha de conexão ("+res.status+")"); }
+  const data = await res.json();
+  if(data.error){ throw new Error(data.error==='invalid_credentials'?"E-mail ou senha inválidos":data.error==='forbidden'?"Esse usuário não tem acesso ao painel":data.error); }
+  return data;
+}
+
+function render(d){
+  $('tFat').textContent = brl(d.rede.faturamento_centavos);
+  $('tVendas').textContent = d.rede.vendas_qtd;
+  $('tLojas').textContent = d.rede.lojas_total;
+
+  $('lojas').innerHTML = d.lojas.map(l=>`
+    <div class="loja">
+      <div>
+        <div class="nome">${l.nome}</div>
+        <div class="meta">${l.vendas_qtd} venda(s) · ${l.estoque_produtos} produtos${l.estoque_baixo>0?`<span class="badge alerta">${l.estoque_baixo} em falta</span>`:''}</div>
+      </div>
+      <div class="fat">${brl(l.faturamento_centavos)}</div>
+    </div>`).join('');
+
+  $('top').innerHTML = d.top_produtos.length
+    ? d.top_produtos.map(t=>`<div class="top"><div>${t.nome} <span class="q">×${t.qtd}</span></div><div>${brl(t.faturamento_centavos)}</div></div>`).join('')
+    : '<div class="muted" style="padding:8px 0">Nenhuma venda no período.</div>';
+
+  $('atualizado').textContent = "Atualizado às "+new Date().toLocaleTimeString('pt-BR');
+}
+
+async function carregar(){
+  try{ render(await buscar()); }
+  catch(e){ $('dashErr').textContent = e.message; $('dashErr').classList.remove('hidden'); }
+}
+
+$('entrarBtn').onclick = async ()=>{
+  creds.email = $('email').value.trim();
+  creds.senha = $('senha').value;
+  $('loginErr').classList.add('hidden');
+  if(!creds.email || !creds.senha){ $('loginErr').textContent="Preencha e-mail e senha."; $('loginErr').classList.remove('hidden'); return; }
+  $('entrarBtn').disabled = true; $('entrarBtn').textContent = "Entrando...";
+  try{
+    const d = await buscar();
+    $('loginCard').classList.add('hidden');
+    $('dash').classList.remove('hidden');
+    $('oi').textContent = creds.email;
+    render(d);
+  }catch(e){
+    $('loginErr').textContent = e.message; $('loginErr').classList.remove('hidden');
+  }finally{
+    $('entrarBtn').disabled = false; $('entrarBtn').textContent = "Entrar";
+  }
+};
+
+document.querySelectorAll('.periods button').forEach(b=>{
+  b.onclick = ()=>{
+    document.querySelectorAll('.periods button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    periodoDias = parseInt(b.dataset.d,10);
+    carregar();
+  };
+});
+
+$('sairBtn').onclick = ()=>{
+  creds = { email:"", senha:"" };
+  $('senha').value = "";
+  $('dash').classList.add('hidden');
+  $('loginCard').classList.remove('hidden');
+};
+</script>
+</body>
+</html>

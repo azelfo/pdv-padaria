@@ -71,8 +71,15 @@ namespace PdvPadaria.Views
                             httpClient.DefaultRequestHeaders.Add("apikey", supabaseAnonKey);
                             httpClient.DefaultRequestHeaders.Add("Authorization", "Bearer " + supabaseAnonKey);
 
-                            var url = $"{supabaseUrl.TrimEnd('/')}/rest/v1/User?email=eq.{Uri.EscapeDataString(email)}&active=eq.true";
-                            var response = await httpClient.GetAsync(url);
+                            // Login server-side: a função RPC verifica a senha no banco
+                            // (pgcrypto) e devolve o usuário SEM o hash. A senha nunca é
+                            // exposta para a anon key, e o hash não trafega pela rede.
+                            var url = $"{supabaseUrl.TrimEnd('/')}/rest/v1/rpc/login_caixa";
+                            var rpcBody = new StringContent(
+                                JsonConvert.SerializeObject(new { p_email = email, p_senha = password }),
+                                System.Text.Encoding.UTF8,
+                                "application/json");
+                            var response = await httpClient.PostAsync(url, rpcBody);
 
                             if (response.IsSuccessStatusCode)
                             {
@@ -83,15 +90,9 @@ namespace PdvPadaria.Views
                                 {
                                     var onlineUser = users[0];
 
-                                    if (!PasswordHasher.Verify(password, onlineUser.Password))
-                                    {
-                                        ShowError("Credenciais inválidas. Verifique sua senha.");
-                                        return;
-                                    }
-
-                                    // Senha correta: grava localmente SEMPRE como hash BCrypt
-                                    // (mesmo se o servidor ainda devolver texto puro), para o
-                                    // SQLite local nunca conter senha em claro.
+                                    // RPC já validou a senha no servidor. Grava localmente
+                                    // como hash BCrypt (derivado da senha digitada) para
+                                    // permitir login offline futuro deste operador.
                                     onlineUser.Password = PasswordHasher.Hash(password);
 
                                     var connection = App.Database.GetConnection();
@@ -102,7 +103,9 @@ namespace PdvPadaria.Views
                                 }
                                 else
                                 {
-                                    ShowError("Usuário não cadastrado na nuvem ou inativo.");
+                                    // RPC retorna vazio tanto para senha errada quanto para
+                                    // e-mail inexistente/inativo (não revela qual dos dois).
+                                    ShowError("Credenciais inválidas. Verifique sua senha.");
                                     return;
                                 }
                             }
@@ -154,7 +157,7 @@ namespace PdvPadaria.Views
                     {
                         try
                         {
-                            var syncService = new SyncService(App.Database.GetSyncConnection());
+                            using var syncService = new SyncService(App.Database.GetSyncConnection());
                             await syncService.PullUpdatesAsync(tenantId, storeId);
                         }
                         catch (Exception ex)
@@ -165,7 +168,8 @@ namespace PdvPadaria.Views
                 }
 
                 // Sucesso completo: Abre a janela principal do PDV
-                var pdvWindow = new MainWindow(user!);
+                // Passa as credenciais digitadas (memória) para o painel da rede do DONO.
+                var pdvWindow = new MainWindow(user!, email, password);
                 pdvWindow.Show();
                 
                 // Fecha a tela de login

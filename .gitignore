@@ -48,3 +48,6 @@ next-env.d.ts
 [Bb]in/
 [Oo]bj/
 *.user
+
+# Pasta de trabalho temporaria (contem segredos: tokens, anon key)
+scratch/

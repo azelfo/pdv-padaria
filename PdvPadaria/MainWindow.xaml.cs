@@ -28,6 +28,11 @@ namespace PdvPadaria
         private int _discountCentavos = 0;
         private int _totalCentavos = 0;
         private DispatcherTimer _syncTimer = null!;
+        private readonly System.Threading.SemaphoreSlim _syncGate = new System.Threading.SemaphoreSlim(1, 1);
+        private string _donoEmail = string.Empty;
+        private string _donoPassword = string.Empty;
+        private int _redePeriodoDias = 0;
+        private static readonly System.Net.Http.HttpClient _redeHttp = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         private string? _activeSaleId;
         private System.Threading.CancellationTokenSource? _pixCts;
 
@@ -43,11 +48,14 @@ namespace PdvPadaria
         private DateTime _lastBarcodeEvent = DateTime.MinValue;
         private readonly System.Text.StringBuilder _barcodeAccumulator = new System.Text.StringBuilder();
 
-        public MainWindow(User user)
+        public MainWindow(User user, string loginEmail = "", string loginPassword = "")
         {
             InitializeComponent();
             CurrentUser = user;
-            
+            // Credenciais guardadas em memória só para o painel da rede (RPC exige login do dono).
+            _donoEmail = loginEmail;
+            _donoPassword = loginPassword;
+
             OperatorNameText.Text = CurrentUser.Name;
             CartItemsList.ItemsSource = _cartItems;
 
@@ -59,7 +67,13 @@ namespace PdvPadaria
                 BtnDashboard.Visibility = Visibility.Collapsed;
                 BtnAlertas.Visibility = Visibility.Collapsed;
             }
-            
+
+            // Painel da Rede (consolidado das lojas) é exclusivo do DONO.
+            if (CurrentUser.Role.ToUpper() != "DONO")
+            {
+                BtnRede.Visibility = Visibility.Collapsed;
+            }
+
             Loaded += (s, e) => SetPdvState(PdvState.Consultation);
         }
 
@@ -200,6 +214,8 @@ namespace PdvPadaria
                 BtnDashboard.Foreground = AppColors.TextMuted;
                 BtnAlertas.Background = System.Windows.Media.Brushes.Transparent;
                 BtnAlertas.Foreground = AppColors.TextMuted;
+                BtnRede.Background = System.Windows.Media.Brushes.Transparent;
+                BtnRede.Foreground = AppColors.TextMuted;
 
                 // Destaca o botão selecionado
                 btn.Background = AppColors.Surface;
@@ -224,6 +240,10 @@ namespace PdvPadaria
                 else if (index == 4)
                 {
                     LoadLowStockAlerts();
+                }
+                else if (index == 5)
+                {
+                    _ = LoadRede();
                 }
             }
         }
@@ -2284,9 +2304,13 @@ namespace PdvPadaria
 
         private async Task<(bool Success, string Error)> SincronizarDadosNuvem()
         {
+            // Trava anti-sobreposição ATÔMICA: timer de 60s, botão manual e o sync disparado após
+            // venda/cancelamento podem vir de threads diferentes. WaitAsync(0) não bloqueia — se já
+            // houver um sync em curso, sai sem erro (evita dois ciclos simultâneos corromperem o SQLite).
+            if (!await _syncGate.WaitAsync(0)) return (true, string.Empty);
             try
             {
-                var syncService = new SyncService(App.Database.GetSyncConnection());
+                using var syncService = new SyncService(App.Database.GetSyncConnection());
 
                 string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
                 string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
@@ -2294,8 +2318,18 @@ namespace PdvPadaria
                 bool pushSuccess = await syncService.PushSalesAsync(tenantId, storeId);
                 bool pullSuccess = await syncService.PullUpdatesAsync(tenantId, storeId);
 
+                // Envia a "foto" do estoque local desta loja para a nuvem (alimenta o painel do dono).
+                // Só envia se a VENDA e o CATÁLOGO subiram com sucesso: garante que o snapshot publicado
+                // já reflete as vendas que o causaram (senão saldo e histórico divergem no painel) e que
+                // produtos novos já foram semeados localmente (evita subir estoque zerado).
+                bool stockSuccess = true;
+                if (pushSuccess && pullSuccess)
+                {
+                    stockSuccess = await syncService.PushStockSnapshotAsync(tenantId, storeId);
+                }
+
                 var pendingCount = await App.Database.GetConnection().Table<Sale>().Where(s => !s.IsSynced).CountAsync();
-                
+
                 Dispatcher.Invoke(() => {
                     if (pendingCount > 0)
                     {
@@ -2309,7 +2343,7 @@ namespace PdvPadaria
                     }
                 });
 
-                if (!pushSuccess || !pullSuccess)
+                if (!pushSuccess || !pullSuccess || !stockSuccess)
                 {
                     return (false, syncService.LastError);
                 }
@@ -2321,6 +2355,152 @@ namespace PdvPadaria
                 System.Diagnostics.Debug.WriteLine($"[Sincronizacao Silenciosa Error]: {ex.Message}");
                 return (false, ex.Message);
             }
+            finally
+            {
+                _syncGate.Release();
+            }
         }
+
+        // ================= ABA 5: PAINEL DA REDE (DONO) =================
+
+        public class RedeLojaView
+        {
+            public string Nome { get; set; } = string.Empty;
+            public string Resumo { get; set; } = string.Empty;
+            public string FatString { get; set; } = string.Empty;
+            public string AlertaText { get; set; } = string.Empty;
+            public Visibility TemAlerta { get; set; } = Visibility.Collapsed;
+        }
+
+        public class RedeTopView
+        {
+            public string Nome { get; set; } = string.Empty;
+            public string QtdString { get; set; } = string.Empty;
+            public string FatString { get; set; } = string.Empty;
+        }
+
+        private void RedePeriodo_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button b && b.Tag is string s && int.TryParse(s, out int d))
+            {
+                _redePeriodoDias = d;
+                HighlightRedePeriodo(b);
+                _ = LoadRede();
+            }
+        }
+
+        private void RedeRefresh_Click(object sender, RoutedEventArgs e) => _ = LoadRede();
+
+        private void HighlightRedePeriodo(Button active)
+        {
+            foreach (var b in new[] { RedeHojeBtn, Rede7Btn, Rede30Btn })
+            {
+                b.Background = AppColors.Surface;
+                b.Foreground = AppColors.TextMuted;
+            }
+            active.Background = AppColors.Accent;
+            active.Foreground = System.Windows.Media.Brushes.Black;
+        }
+
+        // Busca o painel consolidado das lojas na nuvem (mesma RPC do painel web).
+        private async Task LoadRede()
+        {
+            RedeStatus.Visibility = Visibility.Collapsed;
+            try
+            {
+                var now = DateTime.Now;
+                DateTime de = _redePeriodoDias == 0 ? now.Date : now.Date.AddDays(-_redePeriodoDias);
+                DateTime ate = now.Date.AddDays(1).AddSeconds(-1);
+                string from = de.ToString("yyyy-MM-ddTHH:mm:ss");
+                string to = ate.ToString("yyyy-MM-ddTHH:mm:ss");
+
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
+                {
+                    ShowRedeError("Configuração da nuvem ausente no .env.");
+                    return;
+                }
+
+                var payload = new { p_email = _donoEmail, p_password = _donoPassword, p_from = from, p_to = to };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_dashboard_rede");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    ShowRedeError($"Sem conexão com a nuvem ({(int)resp.StatusCode}).");
+                    return;
+                }
+
+                var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+                if (j["error"] != null)
+                {
+                    string err = j["error"]!.ToString();
+                    ShowRedeError(err == "invalid_credentials"
+                        ? "Para ver o painel da rede, faça login ONLINE como dono (e-mail/senha da nuvem)."
+                        : err == "forbidden" ? "Seu usuário não tem acesso ao painel da rede." : err);
+                    return;
+                }
+
+                var rede = j["rede"]!;
+                RedeFat.Text = FormatBRL((long)rede["faturamento_centavos"]!);
+                RedeVendas.Text = rede["vendas_qtd"]!.ToString();
+                RedeLojas.Text = rede["lojas_total"]!.ToString();
+
+                var lojas = new List<RedeLojaView>();
+                foreach (var l in (Newtonsoft.Json.Linq.JArray)j["lojas"]!)
+                {
+                    int baixo = (int)l["estoque_baixo"]!;
+                    lojas.Add(new RedeLojaView
+                    {
+                        Nome = l["nome"]!.ToString(),
+                        Resumo = $"{l["vendas_qtd"]} venda(s) · {l["estoque_produtos"]} produtos",
+                        FatString = FormatBRL((long)l["faturamento_centavos"]!),
+                        AlertaText = baixo > 0 ? $"{baixo} em falta" : string.Empty,
+                        TemAlerta = baixo > 0 ? Visibility.Visible : Visibility.Collapsed
+                    });
+                }
+                RedeLojasList.ItemsSource = lojas;
+
+                var tops = new List<RedeTopView>();
+                foreach (var t in (Newtonsoft.Json.Linq.JArray)j["top_produtos"]!)
+                {
+                    tops.Add(new RedeTopView
+                    {
+                        Nome = t["nome"]!.ToString(),
+                        QtdString = $"×{t["qtd"]}",
+                        FatString = FormatBRL((long)t["faturamento_centavos"]!)
+                    });
+                }
+                RedeTopList.ItemsSource = tops;
+            }
+            catch (Exception ex)
+            {
+                ShowRedeError("Sem conexão com a nuvem.");
+                System.Diagnostics.Debug.WriteLine($"[LoadRede Error]: {ex.Message}");
+            }
+        }
+
+        private void ShowRedeError(string msg)
+        {
+            RedeStatus.Text = msg;
+            RedeStatus.Visibility = Visibility.Visible;
+            RedeLojasList.ItemsSource = null;
+            RedeTopList.ItemsSource = null;
+            RedeFat.Text = "—";
+            RedeVendas.Text = "—";
+            RedeLojas.Text = "—";
+        }
+
+        private static string FormatBRL(long centavos)
+            => (centavos / 100.0).ToString("C2", new System.Globalization.CultureInfo("pt-BR"));
     }
 }
