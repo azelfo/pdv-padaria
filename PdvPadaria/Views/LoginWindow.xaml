@@ -1,0 +1,225 @@
+<Window x:Class="PdvPadaria.Views.LoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Login - PDV Padaria" Height="500" Width="420"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        MouseDown="Window_MouseDown">
+
+    <Window.Resources>
+        <!-- Estilo dos Inputs de Texto (Efeito Focus Dourado e Cantos Arredondados) -->
+        <Style x:Key="RoundedInputBox" TargetType="Control">
+            <Setter Property="Background" Value="{StaticResource Surface}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderSoft}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Control">
+                        <Border CornerRadius="8" 
+                                Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="false" Margin="2"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                <Setter Property="Background" Value="{StaticResource BgBase}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Estilo do Botão Principal (Dourado Premium com Cantos Arredondados) -->
+        <Style x:Key="GoldButton" TargetType="Button">
+            <Setter Property="Background">
+                <Setter.Value>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#f59e0b" Offset="0.0"/>
+                        <GradientStop Color="#d97706" Offset="1.0"/>
+                    </LinearGradientBrush>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Foreground" Value="{StaticResource BgBase}"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="8" Background="{TemplateBinding Background}" Padding="12,10"
+                                RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform>
+                                <ScaleTransform x:Name="St" ScaleX="1" ScaleY="1"/>
+                            </Border.RenderTransform>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background">
+                                    <Setter.Value>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="#fbbf24" Offset="0.0"/>
+                                            <GradientStop Color="#f59e0b" Offset="1.0"/>
+                                        </LinearGradientBrush>
+                                    </Setter.Value>
+                                </Setter>
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleX" To="1.02" Duration="0:0:0.13"/>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleY" To="1.02" Duration="0:0:0.13"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.13"/>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.13"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleX" To="0.97" Duration="0:0:0.06"/>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleY" To="0.97" Duration="0:0:0.06"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.1"/>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.1"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Background" Value="{StaticResource BorderSoft}"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextSubtle}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border CornerRadius="16" BorderThickness="1.5">
+        <Border.BorderBrush>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#f59e0b" Offset="0.0"/>
+                <GradientStop Color="#ea580c" Offset="1.0"/>
+            </LinearGradientBrush>
+        </Border.BorderBrush>
+        <!-- Gradiente de Fundo Principal -->
+        <Border.Background>
+            <SolidColorBrush Color="#060608"/> <!-- BgBase token (Color literal: Border.Background exige Color, nao Brush) -->
+        </Border.Background>
+
+        <Grid Margin="30">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Botão Fechar -->
+            <Button Content="✕" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextSubtle}"
+                    FontSize="16" Cursor="Hand" Click="CloseButton_Click" Focusable="False"/>
+
+            <!-- Ícone e Títulos -->
+            <StackPanel Grid.Row="1" HorizontalAlignment="Center" Margin="0,10,0,30">
+                <Path Width="48" Height="48" HorizontalAlignment="Center" Margin="0,0,0,15"
+                      Data="M12,2L2,7L12,12L22,7L12,2M2,17L12,22L22,17M2,12L12,17L22,12">
+                    <Path.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#f59e0b" Offset="0.0"/>
+                            <GradientStop Color="#ea580c" Offset="1.0"/>
+                        </LinearGradientBrush>
+                    </Path.Fill>
+                </Path>
+                <TextBlock Text="PADARIA" FontSize="28" FontWeight="ExtraBold" HorizontalAlignment="Center">
+                    <TextBlock.Foreground>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Color="#fcd34d" Offset="0.0"/>
+                            <GradientStop Color="#fb923c" Offset="1.0"/>
+                        </LinearGradientBrush>
+                    </TextBlock.Foreground>
+                </TextBlock>
+                <TextBlock Text="PDV &amp; GESTÃO PREMIUM" FontSize="11" FontWeight="Medium" HorizontalAlignment="Center" Foreground="{StaticResource TextSubtle}" Margin="0,4,0,0"/>
+            </StackPanel>
+
+            <!-- Formulário de Login -->
+            <StackPanel Grid.Row="2" VerticalAlignment="Center">
+                <!-- Campo E-mail -->
+                <TextBlock Text="E-mail" Foreground="#94a3b8" FontSize="12" Margin="0,0,0,6"/>
+                <TextBox x:Name="EmailInput" Style="{StaticResource RoundedInputBox}" Margin="0,0,0,18"
+                          Text="dono@padaria.com.br"/>
+
+                <!-- Campo Senha -->
+                <TextBlock Text="Senha" Foreground="#94a3b8" FontSize="12" Margin="0,0,0,6"/>
+                <PasswordBox x:Name="PasswordInput" PasswordChar="●" Style="{StaticResource RoundedInputBox}" Margin="0,0,0,25"
+                              KeyDown="PasswordInput_KeyDown"/>
+
+                <!-- Mensagem de Erro -->
+                <TextBlock x:Name="ErrorText" Text="" Foreground="#f87171" FontSize="12" 
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,15" Visibility="Collapsed"/>
+
+                <!-- Botão Entrar -->
+                <Button x:Name="LoginButton" Content="Entrar no Caixa" Style="{StaticResource GoldButton}" Click="LoginButton_Click"/>
+
+                <!-- Atalhos de Teste Rápido (Debug) -->
+                <TextBlock Text="Atalhos de Teste Rápido (Debug)" Foreground="#475569" FontSize="10" HorizontalAlignment="Center" Margin="0,20,0,8" FontWeight="SemiBold"/>
+                <UniformGrid Columns="3" Rows="1">
+                    <Button x:Name="BtnTestDono" Content="Dono" Click="TestLoginShortcut_Click" Tag="dono@padaria.com.br"
+                            Background="#141419" Foreground="#94a3b8" BorderBrush="#26262e" BorderThickness="1" Margin="2" Padding="5" FontSize="11" Cursor="Hand">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="4"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    <Button x:Name="BtnTestGerente" Content="Gerente" Click="TestLoginShortcut_Click" Tag="gerente.centro@padaria.com.br"
+                            Background="#141419" Foreground="#94a3b8" BorderBrush="#26262e" BorderThickness="1" Margin="2" Padding="5" FontSize="11" Cursor="Hand">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="4"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                    <Button x:Name="BtnTestAtendente" Content="Caixa" Click="TestLoginShortcut_Click" Tag="atendente.centro@padaria.com.br"
+                            Background="#141419" Foreground="#94a3b8" BorderBrush="#26262e" BorderThickness="1" Margin="2" Padding="5" FontSize="11" Cursor="Hand">
+                        <Button.Resources>
+                            <Style TargetType="Border">
+                                <Setter Property="CornerRadius" Value="4"/>
+                            </Style>
+                        </Button.Resources>
+                    </Button>
+                </UniformGrid>
+            </StackPanel>
+
+            <!-- Rodapé Informativo -->
+            <TextBlock Grid.Row="3" Text="Modo Caixa Offline-First" FontSize="11" Foreground="{StaticResource TextFaint}"
+                       HorizontalAlignment="Center" Margin="0,15,0,0"/>
+        </Grid>
+    </Border>
+</Window>

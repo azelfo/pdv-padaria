@@ -43,3 +43,8 @@ next-env.d.ts
 /src/generated/prisma
 
 .vercel
+
+# .NET / WPF build artifacts (PdvPadaria desktop app)
+[Bb]in/
+[Oo]bj/
+*.user
