@@ -51,6 +51,7 @@ namespace PdvPadaria.Services
                 await _database.CreateTableAsync<SaleItem>();
                 await _database.CreateTableAsync<BreadConfig>();
                 await _database.CreateTableAsync<StockMovement>();
+                await _database.CreateTableAsync<AppliedOwnerAdjustment>();
 
                 // Obtém valores reais do .env com fallbacks de teste
                 string tenantId = EnvService.Get("TENANT_ID", "tenant-test");

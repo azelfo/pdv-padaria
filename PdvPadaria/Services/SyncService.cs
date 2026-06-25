@@ -360,12 +360,59 @@ namespace PdvPadaria.Services
                     }
                 });
 
+                // 4. Aplica ajustes de estoque feitos pelo DONO para esta loja (controle remoto).
+                //    Cada ajuste é aplicado UMA única vez — não reverte venda offline a cada pull.
+                await ApplyOwnerAdjustmentsAsync(storeId);
+
                 return true;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[Pull Error]: {ex.Message}");
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Baixa os ajustes de estoque que o dono lançou na nuvem para ESTA loja e os aplica
+        /// no estoque local, marcando cada um como aplicado (idempotente pelo id do ajuste).
+        /// </summary>
+        private async Task ApplyOwnerAdjustmentsAsync(string storeId)
+        {
+            try
+            {
+                var ajustes = await GetFromSupabaseAsync<OwnerStockAdjustmentDto>(
+                    $"OwnerStockAdjustment?storeId=eq.{Uri.EscapeDataString(storeId)}&order=createdAt.asc");
+                if (ajustes == null || ajustes.Count == 0) return;
+
+                _dbConnection.RunInTransaction(() =>
+                {
+                    foreach (var aj in ajustes)
+                    {
+                        if (string.IsNullOrEmpty(aj.Id)) continue;
+                        // Já aplicado antes? pula (uma vez só).
+                        if (_dbConnection.Find<AppliedOwnerAdjustment>(aj.Id) != null) continue;
+
+                        var prod = _dbConnection.Find<Product>(aj.ProductId);
+                        if (prod != null)
+                        {
+                            if (aj.MinStock.HasValue)
+                                _dbConnection.Execute(
+                                    "UPDATE Product SET LocalStockQuantity=?, MinStock=? WHERE Id=?",
+                                    aj.Quantity, aj.MinStock.Value, aj.ProductId);
+                            else
+                                _dbConnection.Execute(
+                                    "UPDATE Product SET LocalStockQuantity=? WHERE Id=?",
+                                    aj.Quantity, aj.ProductId);
+                        }
+
+                        _dbConnection.Insert(new AppliedOwnerAdjustment { Id = aj.Id });
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ApplyOwnerAdjustments Error]: {ex.Message}");
             }
         }
 
@@ -419,6 +466,15 @@ namespace PdvPadaria.Services
         public string StoreId { get; set; } = string.Empty;
         public double Quantity { get; set; }
         public double MinStock { get; set; }
+    }
+
+    // Ajuste de estoque que o DONO fez para esta loja na nuvem; aplicado uma única vez.
+    public class OwnerStockAdjustmentDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string ProductId { get; set; } = string.Empty;
+        public double Quantity { get; set; }
+        public double? MinStock { get; set; }
     }
 
     #endregion

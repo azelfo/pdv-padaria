@@ -33,6 +33,15 @@ namespace PdvPadaria
         private string _donoPassword = string.Empty;
         private int _redePeriodoDias = 0;
         private static readonly System.Net.Http.HttpClient _redeHttp = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        // Abas do DONO com filtro por loja: "" = minha loja (local); senão = id da loja remota.
+        private string _stockRemoteStoreId = string.Empty;
+        private string _alertRemoteStoreId = string.Empty;
+        private string _historyRemoteStoreId = string.Empty;
+        private bool _stockSelectorReady = false;
+        private bool _alertSelectorReady = false;
+        private bool _historySelectorReady = false;
+        private bool _suppressStockStoreEvent = false;
+        private List<RedeLojaView> _lojasCache = new List<RedeLojaView>();
         private string? _activeSaleId;
         private System.Threading.CancellationTokenSource? _pixCts;
 
@@ -227,11 +236,15 @@ namespace PdvPadaria
                 // Carrega dados específicos da aba
                 if (index == 1)
                 {
-                    LoadStock();
+                    _ = SetupStockStoreSelector();
+                    if (string.IsNullOrEmpty(_stockRemoteStoreId)) LoadStock();
+                    else _ = LoadRemoteStock(_stockRemoteStoreId);
                 }
                 else if (index == 2)
                 {
-                    LoadSalesHistory();
+                    _ = SetupHistoryStoreSelector();
+                    if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
+                    else _ = LoadRemoteHistory(_historyRemoteStoreId);
                 }
                 else if (index == 3)
                 {
@@ -239,7 +252,9 @@ namespace PdvPadaria
                 }
                 else if (index == 4)
                 {
-                    LoadLowStockAlerts();
+                    _ = SetupAlertStoreSelector();
+                    if (string.IsNullOrEmpty(_alertRemoteStoreId)) LoadLowStockAlerts();
+                    else _ = LoadRemoteAlerts(_alertRemoteStoreId);
                 }
                 else if (index == 5)
                 {
@@ -870,6 +885,13 @@ namespace PdvPadaria
                 return;
             }
 
+            // Se for PIX e já tivermos a venda pendente gravada localmente, apenas conclui a aprovação
+            if (_selectedPaymentMethod == "PIX" && !string.IsNullOrEmpty(_activeSaleId))
+            {
+                await ConcluirVendaPixAprovadaAsync(_activeSaleId);
+                return;
+            }
+
             try
             {
                 var connection = App.Database.GetConnection();
@@ -1159,6 +1181,21 @@ namespace PdvPadaria
                     PanelPrecoVenda.Visibility = Visibility.Visible;
                     PaymentTabControl.Visibility = Visibility.Collapsed;
                     
+                    // Se cancelou o fluxo do PIX, remove a venda pendente e reverte estoque
+                    if (_selectedPaymentMethod == "PIX" && !string.IsNullOrEmpty(_activeSaleId))
+                    {
+                        var saleIdToCancel = _activeSaleId;
+                        _pixCts?.Cancel();
+                        _pixCts = null;
+                        _activeSaleId = null;
+
+                        _ = Task.Run(async () =>
+                        {
+                            await CancelarVendaLocalAsync(saleIdToCancel);
+                            await RunSincronizacaoSilenciosa();
+                        });
+                    }
+
                     SearchBox.Text = string.Empty;
                     SearchBox.Focus();
                     break;
@@ -1202,27 +1239,38 @@ namespace PdvPadaria
             SetPdvState(PdvState.ActiveSale);
         }
 
-        private void PaymentTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private async void PaymentTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (e.Source != PaymentTabControl) return;
+
+            // Se o método anterior era PIX e tinha uma venda ativa, cancela para estornar estoque
+            if (_selectedPaymentMethod == "PIX" && !string.IsNullOrEmpty(_activeSaleId))
+            {
+                var saleIdToCancel = _activeSaleId;
+                _pixCts?.Cancel();
+                _pixCts = null;
+                _activeSaleId = null;
+
+                _ = Task.Run(async () =>
+                {
+                    await CancelarVendaLocalAsync(saleIdToCancel);
+                    await RunSincronizacaoSilenciosa();
+                });
+            }
 
             if (PaymentTabControl.SelectedIndex == 0)
             {
                 _selectedPaymentMethod = "DINHEIRO";
-                _pixCts?.Cancel();
-                _pixCts = null;
                 CashReceivedInput.Focus();
             }
             else if (PaymentTabControl.SelectedIndex == 1)
             {
                 _selectedPaymentMethod = "PIX";
-                _ = IniciarFluxoPix();
+                await IniciarFluxoPix();
             }
             else if (PaymentTabControl.SelectedIndex == 2)
             {
                 _selectedPaymentMethod = "CARTAO_CREDITO";
-                _pixCts?.Cancel();
-                _pixCts = null;
             }
         }
 
@@ -1242,42 +1290,72 @@ namespace PdvPadaria
 
             try
             {
-                // Cria cobrança real no Banco Inter PJ
-                var cob = await InterPixService.CriarCobrançaPixAsync(_totalCentavos);
+                if (string.IsNullOrEmpty(_activeSaleId))
+                {
+                    _activeSaleId = Guid.NewGuid().ToString();
+                }
+
+                // 1. Salva a venda localmente com status PENDENTE e abate o estoque local
+                await SalvarVendaComStatusAsync(_activeSaleId, "PENDENTE");
+
+                // 2. Sincroniza imediatamente com a nuvem (para o webhook achar a venda)
+                await SincronizarDadosNuvem();
 
                 if (token.IsCancellationRequested) return;
 
-                string pixCopiaCola = cob.pixCopiaCola ?? "";
-                string txid = cob.txid ?? "";
+                // 3. Gera o QR Code Estático localmente e retorna o Base64
+                string base64Image = InfinitePayService.GerarQrCodePixLocal(_activeSaleId, _totalCentavos);
 
-                if (string.IsNullOrEmpty(pixCopiaCola))
+                if (token.IsCancellationRequested) return;
+
+                // Renderiza o QR Code a partir do Base64
+                if (base64Image.StartsWith("data:image/png;base64,"))
                 {
-                    throw new Exception("Resposta do Banco Inter não continha a string Pix Copia e Cola.");
+                    string base64Data = base64Image.Substring("data:image/png;base64,".Length);
+                    byte[] imageBytes = Convert.FromBase64String(base64Data);
+
+                    var bitmapImage = new BitmapImage();
+                    using (var ms = new MemoryStream(imageBytes))
+                    {
+                        bitmapImage.BeginInit();
+                        bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+                        bitmapImage.StreamSource = ms;
+                        bitmapImage.EndInit();
+                    }
+                    bitmapImage.Freeze();
+                    PixQrCodeImage.Source = bitmapImage;
                 }
 
-                // Renderiza QR Code
-                RenderizarQrCode(pixCopiaCola);
-                PixCopiaColaTextBox.Text = pixCopiaCola;
+                // Não temos a string PIX Copia e Cola facilmente do GerarQrCodePixLocal que retorna a imagem,
+                // mas podemos ocultar a TextBox ou colocar uma instrução genérica.
+                PixCopiaColaTextBox.Text = "Escaneie o QR Code acima";
 
                 // Troca visibilidade dos painéis
                 PanelPixLoading.Visibility = Visibility.Collapsed;
                 PanelPixMain.Visibility = Visibility.Visible;
                 BorderPixOnlineStatus.Visibility = Visibility.Visible;
-                TxtPixInstrucao.Text = "Aponte o app do seu banco para pagar o QR Code do PIX.";
+                TxtPixInstrucao.Text = "Escaneie o QR Code para abrir a página segura de pagamento e concluir o PIX no seu celular.";
 
-                // Inicia o polling de verificação de pagamento de 2 em 2 segundos
-                _ = IniciarPollingPix(txid, token);
+                // Inicia o polling de verificação de pagamento consultando a nuvem (Supabase)
+                _ = IniciarPollingPix(_activeSaleId, token);
             }
             catch (Exception ex)
             {
                 if (token.IsCancellationRequested) return;
 
-                System.Diagnostics.Debug.WriteLine($"[PIX Inter Error] {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[PIX InfinitePay Error] {ex.Message}");
+
+                // Se salvou a venda e deu erro depois, estorna para não manter lixo pendente e devolver estoque
+                if (!string.IsNullOrEmpty(_activeSaleId))
+                {
+                    await CancelarVendaLocalAsync(_activeSaleId);
+                    await RunSincronizacaoSilenciosa();
+                }
 
                 // Avisa o lojista
                 MessageBox.Show(
-                    $"Não foi possível gerar a cobrança PIX no Banco Inter.\n\nDetalhes do Erro:\n{ex.Message}\n\nO caixa voltará à confirmação manual para esta transação.",
-                    "Falha na API Banco Inter",
+                    $"Não foi possível gerar a cobrança PIX na InfinitePay.\n\nDetalhes do Erro:\n{ex.Message}\n\nO caixa voltará à confirmação manual para esta transação.",
+                    "Falha na API InfinitePay",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error
                 );
@@ -1286,7 +1364,7 @@ namespace PdvPadaria
                 PanelPixLoading.Visibility = Visibility.Collapsed;
                 PanelPixMain.Visibility = Visibility.Visible;
                 BorderPixOnlineStatus.Visibility = Visibility.Collapsed;
-                TxtPixInstrucao.Text = "⚠️ ERRO API: Confirme o PIX no app do banco e clique em CONFIRMAR PAGAMENTO MANUAL.";
+                TxtPixInstrucao.Text = "⚠️ ERRO API: Confirme o pagamento com o cliente e clique/pressione CONFIRMAR PAGAMENTO MANUAL.";
             }
         }
 
@@ -1318,7 +1396,7 @@ namespace PdvPadaria
             }
         }
 
-        private async Task IniciarPollingPix(string txid, System.Threading.CancellationToken token)
+        private async Task IniciarPollingPix(string saleId, System.Threading.CancellationToken token)
         {
             while (!token.IsCancellationRequested)
             {
@@ -1326,14 +1404,13 @@ namespace PdvPadaria
                 {
                     await Task.Delay(2000, token);
 
-                    string status = await InterPixService.ConsultarPixAsync(txid);
+                    bool isPaid = await InfinitePayService.VerificarPagamentoInfinitePayAsync(saleId);
 
-                    if (status.ToUpper() == "CONCLUIDA" || status.ToUpper() == "CONCLUIDO")
+                    if (isPaid)
                     {
-                        Dispatcher.Invoke(() =>
+                        await Dispatcher.InvokeAsync(async () =>
                         {
-                            MessageBox.Show("Pagamento PIX recebido e confirmado na conta PJ do Banco Inter!", "PIX Confirmado", MessageBoxButton.OK, MessageBoxImage.Information);
-                            FinishSaleFlow();
+                            await ConcluirVendaPixAprovadaAsync(saleId);
                         });
                         break;
                     }
@@ -1344,10 +1421,171 @@ namespace PdvPadaria
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[Polling Inter Error] {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Polling InfinitePay Error] {ex.Message}");
                 }
             }
         }
+
+        #region Métodos de Suporte à Integração InfinitePay
+
+        private async Task SalvarVendaComStatusAsync(string saleId, string status)
+        {
+            var connection = App.Database.GetConnection();
+
+            string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
+            string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+
+            var terminalName = EnvService.Get("TERMINAL_NAME");
+            var sale = new Sale
+            {
+                Id = saleId,
+                StoreId = storeId,
+                UserId = CurrentUser.Id,
+                TenantId = tenantId,
+                SaleDate = DateTime.Now,
+                Subtotal = _subtotalCentavos,
+                Discount = _discountCentavos,
+                Total = _totalCentavos,
+                PaymentMethod = "PIX",
+                PaymentStatus = status,
+                IsSynced = false,
+                Notes = string.IsNullOrEmpty(terminalName) ? null : $"[{terminalName}]"
+            };
+
+            await App.Database.RunInTransactionAsync((tx) =>
+            {
+                tx.Insert(sale);
+
+                foreach (var item in _cartItems)
+                {
+                    var saleItem = new SaleItem
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        SaleId = saleId,
+                        ProductId = item.ProductId,
+                        Quantity = item.Quantity,
+                        PriceUnit = item.PriceUnit,
+                        Subtotal = item.Subtotal,
+                        Type = item.ProductType
+                    };
+
+                    var stockMovement = new StockMovement
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        ProductId = item.ProductId,
+                        StoreId = storeId,
+                        UserId = CurrentUser.Id,
+                        TenantId = tenantId,
+                        Type = "SAIDA",
+                        Quantity = item.Quantity,
+                        Reason = "VENDA",
+                        SaleId = saleId,
+                        CreatedAt = DateTime.Now,
+                        IsSynced = false
+                    };
+
+                    tx.Insert(saleItem);
+                    tx.Insert(stockMovement);
+
+                    var product = tx.Find<Product>(item.ProductId);
+                    if (product != null)
+                    {
+                        product.LocalStockQuantity = Math.Max(0, product.LocalStockQuantity - item.Quantity);
+                        tx.Update(product);
+                    }
+                }
+            });
+        }
+
+        private async Task AtualizarStatusVendaLocalAsync(string saleId, string status)
+        {
+            var connection = App.Database.GetConnection();
+            var sale = await connection.FindAsync<Sale>(saleId);
+            if (sale != null)
+            {
+                sale.PaymentStatus = status;
+                sale.IsSynced = false; // Força re-sincronizar para a nuvem
+                await connection.UpdateAsync(sale);
+            }
+        }
+
+        private async Task CancelarVendaLocalAsync(string saleId)
+        {
+            var connection = App.Database.GetConnection();
+            var sale = await connection.FindAsync<Sale>(saleId);
+            if (sale == null || sale.PaymentStatus == "CANCELADO") return;
+
+            string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
+            string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+
+            sale.PaymentStatus = "CANCELADO";
+            sale.IsSynced = false; // Força sincronização do cancelamento
+
+            var items = await connection.Table<SaleItem>().Where(i => i.SaleId == saleId).ToListAsync();
+
+            await App.Database.RunInTransactionAsync((tx) =>
+            {
+                tx.Update(sale);
+
+                foreach (var item in items)
+                {
+                    var stockMovement = new StockMovement
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        ProductId = item.ProductId,
+                        StoreId = storeId,
+                        UserId = CurrentUser.Id,
+                        TenantId = tenantId,
+                        Type = "ENTRADA",
+                        Quantity = item.Quantity,
+                        Reason = "AJUSTE_MANUAL",
+                        SaleId = saleId,
+                        CreatedAt = DateTime.Now,
+                        IsSynced = false
+                    };
+
+                    tx.Insert(stockMovement);
+
+                    var product = tx.Find<Product>(item.ProductId);
+                    if (product != null)
+                    {
+                        product.LocalStockQuantity = product.LocalStockQuantity + item.Quantity;
+                        tx.Update(product);
+                    }
+                }
+            });
+        }
+
+        private async Task ConcluirVendaPixAprovadaAsync(string saleId)
+        {
+            try
+            {
+                await AtualizarStatusVendaLocalAsync(saleId, "APROVADO");
+
+                MessageBox.Show("Pagamento PIX recebido e confirmado via InfinitePay!", "PIX Confirmado", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                _cartItems.Clear();
+                _discountCentavos = 0;
+                _selectedPaymentMethod = string.Empty;
+                CashReceivedInput.Text = string.Empty;
+                ChangeText.Text = "R$ 0,00";
+
+                _pixCts?.Cancel();
+                _pixCts = null;
+                _activeSaleId = null;
+
+                UpdateTotals();
+                SetPdvState(PdvState.Consultation);
+
+                _ = Task.Run(async () => await RunSincronizacaoSilenciosa());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Erro ao concluir venda PIX: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        #endregion
 
         private void CopyPixCodeBtn_Click(object sender, RoutedEventArgs e)
         {
@@ -1592,10 +1830,12 @@ namespace PdvPadaria
 
         private void SearchStockBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            SearchStockPlaceholder.Visibility = string.IsNullOrEmpty(SearchStockBox.Text) 
-                ? Visibility.Visible 
+            SearchStockPlaceholder.Visibility = string.IsNullOrEmpty(SearchStockBox.Text)
+                ? Visibility.Visible
                 : Visibility.Collapsed;
 
+            // Filtro só vale para a loja local; no modo remoto a lista vem da nuvem.
+            if (!string.IsNullOrEmpty(_stockRemoteStoreId)) return;
             LoadStock(SearchStockBox.Text.Trim());
         }
 
@@ -1603,6 +1843,12 @@ namespace PdvPadaria
         {
             if (sender is Button btn && btn.Tag is string productId)
             {
+                // Modo DONO editando loja remota: grava na nuvem, não no banco local.
+                if (!string.IsNullOrEmpty(_stockRemoteStoreId))
+                {
+                    await AdjustStockRemote(productId);
+                    return;
+                }
                 try
                 {
                     var connection = App.Database.GetConnection();
@@ -1726,13 +1972,495 @@ namespace PdvPadaria
             }
         }
 
+        // ============ ESTOQUE DA REDE: dono edita o estoque de cada loja ============
+
+        // Monta o seletor de loja na aba Estoque (somente DONO). "Minha loja" + uma opção por loja.
+        private async Task SetupStockStoreSelector()
+        {
+            if (CurrentUser.Role.ToUpper() != "DONO")
+            {
+                StockStorePanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+            StockStorePanel.Visibility = Visibility.Visible;
+            if (_stockSelectorReady) return;
+
+            var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
+            _suppressStockStoreEvent = true;
+            StockStoreSelector.Items.Clear();
+            StockStoreSelector.Items.Add(new ComboBoxItem { Content = "Minha loja (local)", Tag = "" });
+            foreach (var l in lojas)
+            {
+                if (string.IsNullOrEmpty(l.StoreId)) continue;
+                StockStoreSelector.Items.Add(new ComboBoxItem { Content = l.Nome, Tag = l.StoreId });
+            }
+            StockStoreSelector.SelectedIndex = 0;
+            _suppressStockStoreEvent = false;
+            _stockSelectorReady = true;
+        }
+
+        // Busca a lista de lojas da rede (id + nome) reusando a RPC do painel do dono.
+        private async Task<List<RedeLojaView>> FetchLojasAsync()
+        {
+            var result = new List<RedeLojaView>();
+            try
+            {
+                var (from, to) = GetRedePeriodo();
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon)) return result;
+
+                var payload = new { p_email = _donoEmail, p_password = _donoPassword, p_from = from, p_to = to };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_dashboard_rede");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                if (!resp.IsSuccessStatusCode) return result;
+                var j = Newtonsoft.Json.Linq.JObject.Parse(await resp.Content.ReadAsStringAsync());
+                if (j["lojas"] is Newtonsoft.Json.Linq.JArray arr)
+                    foreach (var l in arr)
+                        result.Add(new RedeLojaView
+                        {
+                            StoreId = l["storeId"]?.ToString() ?? string.Empty,
+                            Nome = l["nome"]?.ToString() ?? string.Empty
+                        });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[FetchLojas Error]: {ex.Message}");
+            }
+            return result;
+        }
+
+        private void StockStoreSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (_suppressStockStoreEvent) return;
+            string storeId = (StockStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+            _stockRemoteStoreId = storeId;
+            SearchStockBox.IsEnabled = string.IsNullOrEmpty(storeId);
+            if (string.IsNullOrEmpty(storeId)) LoadStock(SearchStockBox.Text.Trim());
+            else _ = LoadRemoteStock(storeId);
+        }
+
+        // Carrega o estoque de uma loja remota a partir da nuvem (somente dono).
+        private async Task LoadRemoteStock(string storeId)
+        {
+            try
+            {
+                var (from, to) = GetRedePeriodo();
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
+                {
+                    MessageBox.Show("Configuração da nuvem ausente no .env.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                var payload = new { p_email = _donoEmail, p_password = _donoPassword, p_store_id = storeId, p_from = from, p_to = to };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_loja_detalhe");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    MessageBox.Show($"Sem conexão com a nuvem ({(int)resp.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    StockProductsList.ItemsSource = null;
+                    return;
+                }
+
+                var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+                if (j["error"] != null)
+                {
+                    string err = j["error"]!.ToString();
+                    MessageBox.Show(err == "invalid_credentials"
+                        ? "Faça login ONLINE como dono para editar o estoque das lojas."
+                        : err == "forbidden" ? "Seu usuário não tem acesso." : err,
+                        "Estoque da rede", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    StockProductsList.ItemsSource = null;
+                    return;
+                }
+
+                var views = new List<StockProductView>();
+                foreach (var p in (Newtonsoft.Json.Linq.JArray)j["estoque"]!)
+                {
+                    views.Add(new StockProductView
+                    {
+                        Id = p["produto_id"]!.ToString(),
+                        Name = p["nome"]!.ToString(),
+                        CategoryName = string.Empty,
+                        Barcode = p["barcode"]?.ToString() ?? string.Empty,
+                        Type = p["tipo"]?.ToString() ?? string.Empty,
+                        UnitMeasure = p["unidade"]?.ToString() ?? "UN",
+                        PriceSale = (int)(p["preco_venda"] ?? 0),
+                        PriceCost = (int)(p["preco_custo"] ?? 0),
+                        LocalStockQuantity = (double)(p["quantidade"] ?? 0),
+                        MinStock = (double)(p["minimo"] ?? 0)
+                    });
+                }
+                StockProductsList.ItemsSource = views;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Sem conexão com a nuvem.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Diagnostics.Debug.WriteLine($"[LoadRemoteStock Error]: {ex.Message}");
+            }
+        }
+
+        // Ajuste de saldo de uma loja remota — grava na nuvem; a loja aplica no próximo sync.
+        private Task AdjustStockRemote(string productId)
+        {
+            var lista = StockProductsList.ItemsSource as List<StockProductView>;
+            var item = lista?.FirstOrDefault(v => v.Id == productId);
+            if (item == null) return Task.CompletedTask;
+
+            string lojaNome = (StockStoreSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "loja";
+            bool isKg = item.UnitMeasure == "KG";
+
+            var win = new Window
+            {
+                Title = $"Ajustar Estoque ({lojaNome}) - {item.Name}",
+                Width = 360,
+                Height = 230,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                WindowStyle = WindowStyle.ToolWindow,
+                Background = AppColors.Surface,
+                Foreground = AppColors.TextPrimary
+            };
+            var stack = new StackPanel { Margin = new Thickness(20) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = $"Estoque atual na {lojaNome}: " + (isKg ? $"{item.LocalStockQuantity:F3} KG" : $"{item.LocalStockQuantity:F0} UN"),
+                FontWeight = FontWeights.Bold,
+                Margin = new Thickness(0, 0, 0, 15),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            var grid = new Grid { Margin = new Thickness(0, 0, 0, 15) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
+            var textBox = new TextBox { Padding = new Thickness(8), FontSize = 14, Background = AppColors.BgBase, Foreground = System.Windows.Media.Brushes.White, BorderBrush = AppColors.BorderSoft };
+            Grid.SetColumn(textBox, 0);
+            var combo = new ComboBox { SelectedIndex = 0, Margin = new Thickness(5, 0, 0, 0) };
+            combo.Items.Add("Somar");
+            combo.Items.Add("Definir");
+            Grid.SetColumn(combo, 1);
+            grid.Children.Add(textBox);
+            grid.Children.Add(combo);
+
+            var confirmBtn = new Button { Content = "Salvar na nuvem", Padding = new Thickness(10), Background = AppColors.Accent, Foreground = AppColors.BgBase, FontWeight = FontWeights.Bold };
+            confirmBtn.Click += async (s, ev) =>
+            {
+                if (!TryParseDouble(textBox.Text, out double inputVal))
+                {
+                    MessageBox.Show("Digite uma quantidade válida.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                double newQty = combo.SelectedIndex == 0 ? item.LocalStockQuantity + inputVal : inputVal;
+                if (newQty < 0)
+                {
+                    MessageBox.Show("O saldo do estoque não pode ser negativo.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                confirmBtn.IsEnabled = false;
+                var (ok, err) = await SetEstoqueLojaAsync(_stockRemoteStoreId, productId, newQty);
+                if (ok)
+                {
+                    win.Close();
+                    await LoadRemoteStock(_stockRemoteStoreId);
+                }
+                else
+                {
+                    confirmBtn.IsEnabled = true;
+                    MessageBox.Show($"Não foi possível salvar: {err}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            };
+
+            stack.Children.Add(grid);
+            stack.Children.Add(confirmBtn);
+            win.Content = stack;
+            textBox.Focus();
+            win.ShowDialog();
+            return Task.CompletedTask;
+        }
+
+        // POST na RPC set_estoque_loja (dono grava o saldo da loja na nuvem).
+        private async Task<(bool ok, string err)> SetEstoqueLojaAsync(string storeId, string productId, double quantity)
+        {
+            try
+            {
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon)) return (false, "Config da nuvem ausente.");
+
+                var payload = new
+                {
+                    p_email = _donoEmail,
+                    p_password = _donoPassword,
+                    p_store_id = storeId,
+                    p_items = new[] { new { productId, quantity } }
+                };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/set_estoque_loja");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode) return (false, $"HTTP {(int)resp.StatusCode}");
+                var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+                if (j["error"] != null)
+                {
+                    string err = j["error"]!.ToString();
+                    return (false, err == "invalid_credentials" ? "faça login online como dono"
+                        : err == "forbidden" ? "sem permissão" : err);
+                }
+                return (true, string.Empty);
+            }
+            catch (Exception ex)
+            {
+                return (false, ex.Message);
+            }
+        }
+
+        // Preenche um seletor de loja: "Minha loja" + uma opção por loja da rede.
+        private void FillStoreSelector(ComboBox cb, List<RedeLojaView> lojas)
+        {
+            _suppressStockStoreEvent = true;
+            cb.Items.Clear();
+            cb.Items.Add(new ComboBoxItem { Content = "Minha loja (local)", Tag = "" });
+            foreach (var l in lojas)
+            {
+                if (string.IsNullOrEmpty(l.StoreId)) continue;
+                cb.Items.Add(new ComboBoxItem { Content = l.Nome, Tag = l.StoreId });
+            }
+            cb.SelectedIndex = 0;
+            _suppressStockStoreEvent = false;
+        }
+
+        // ----- Alertas de Estoque por loja (DONO) -----
+
+        private async Task SetupAlertStoreSelector()
+        {
+            if (CurrentUser.Role.ToUpper() != "DONO") { AlertStorePanel.Visibility = Visibility.Collapsed; return; }
+            AlertStorePanel.Visibility = Visibility.Visible;
+            if (_alertSelectorReady) return;
+            var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
+            FillStoreSelector(AlertStoreSelector, lojas);
+            _alertSelectorReady = true;
+        }
+
+        private void AlertStoreSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (_suppressStockStoreEvent) return;
+            string storeId = (AlertStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+            _alertRemoteStoreId = storeId;
+            if (string.IsNullOrEmpty(storeId)) LoadLowStockAlerts();
+            else _ = LoadRemoteAlerts(storeId);
+        }
+
+        // Carrega os alertas de estoque de uma loja remota a partir da nuvem.
+        private async Task LoadRemoteAlerts(string storeId)
+        {
+            try
+            {
+                var arr = await FetchLojaDetalheEstoque(storeId);
+                if (arr == null) { StockAlertsList.ItemsSource = null; return; }
+
+                var alerts = new List<StockAlertView>();
+                foreach (var p in arr)
+                {
+                    if (!(bool)(p["baixo"] ?? false)) continue;
+                    alerts.Add(new StockAlertView
+                    {
+                        Id = p["produto_id"]!.ToString(),
+                        Name = p["nome"]!.ToString(),
+                        Barcode = p["barcode"]?.ToString() ?? string.Empty,
+                        Type = p["tipo"]?.ToString() ?? string.Empty,
+                        UnitMeasure = p["unidade"]?.ToString() ?? "UN",
+                        LocalStockQuantity = (double)(p["quantidade"] ?? 0),
+                        MinStock = (double)(p["minimo"] ?? 0),
+                        CategoryName = string.Empty
+                    });
+                }
+                alerts = alerts.OrderBy(a => a.Name).ToList();
+
+                int criticalCount = alerts.Count(a => a.LocalStockQuantity <= 0);
+                int lowCount = alerts.Count(a => a.LocalStockQuantity > 0);
+                int totalCount = alerts.Count;
+                AlertZeroStockCountText.Text = criticalCount == 1 ? "1 item" : $"{criticalCount} itens";
+                AlertLowStockCountText.Text = lowCount == 1 ? "1 item" : $"{lowCount} itens";
+                AlertTotalCriticalCountText.Text = totalCount == 1 ? "1 item" : $"{totalCount} itens";
+
+                StockAlertsList.ItemsSource = alerts;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Sem conexão com a nuvem.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Diagnostics.Debug.WriteLine($"[LoadRemoteAlerts Error]: {ex.Message}");
+            }
+        }
+
+        // Busca o array de estoque de uma loja via get_loja_detalhe (reusado por Estoque e Alertas).
+        private async Task<Newtonsoft.Json.Linq.JArray?> FetchLojaDetalheEstoque(string storeId)
+        {
+            var (from, to) = GetRedePeriodo();
+            string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+            string anon = EnvService.Get("SUPABASE_ANON_KEY");
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon)) return null;
+
+            var payload = new { p_email = _donoEmail, p_password = _donoPassword, p_store_id = storeId, p_from = from, p_to = to };
+            var content = new System.Net.Http.StringContent(
+                Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+            using var req = new System.Net.Http.HttpRequestMessage(
+                System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_loja_detalhe");
+            req.Content = content;
+            req.Headers.Add("apikey", anon);
+            req.Headers.Add("Authorization", "Bearer " + anon);
+
+            var resp = await _redeHttp.SendAsync(req);
+            string body = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode) return null;
+            var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+            if (j["error"] != null)
+            {
+                string err = j["error"]!.ToString();
+                MessageBox.Show(err == "invalid_credentials"
+                    ? "Faça login ONLINE como dono para ver as lojas da rede."
+                    : err == "forbidden" ? "Seu usuário não tem acesso." : err,
+                    "Rede", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return null;
+            }
+            return j["estoque"] as Newtonsoft.Json.Linq.JArray;
+        }
+
+        // ----- Histórico / Cancelamentos por loja (DONO) -----
+
+        private async Task SetupHistoryStoreSelector()
+        {
+            if (CurrentUser.Role.ToUpper() != "DONO") { HistoryStorePanel.Visibility = Visibility.Collapsed; return; }
+            HistoryStorePanel.Visibility = Visibility.Visible;
+            if (_historySelectorReady) return;
+            var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
+            FillStoreSelector(HistoryStoreSelector, lojas);
+            _historySelectorReady = true;
+        }
+
+        private void HistoryStoreSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (_suppressStockStoreEvent) return;
+            string storeId = (HistoryStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+            _historyRemoteStoreId = storeId;
+            if (string.IsNullOrEmpty(storeId)) LoadSalesHistory();
+            else _ = LoadRemoteHistory(storeId);
+        }
+
+        // Carrega o histórico de vendas/cancelamentos de uma loja remota a partir da nuvem.
+        private async Task LoadRemoteHistory(string storeId)
+        {
+            try
+            {
+                DateTime startDate = HistoryStartDatePicker.SelectedDate ?? DateTime.Today;
+                DateTime endDate = HistoryEndDatePicker.SelectedDate ?? DateTime.Today;
+                if (!TimeSpan.TryParse(HistoryStartTimeTextBox.Text.Trim(), out TimeSpan startTime)) startTime = new TimeSpan(0, 0, 0);
+                if (!TimeSpan.TryParse(HistoryEndTimeTextBox.Text.Trim(), out TimeSpan endTime)) endTime = new TimeSpan(23, 59, 59);
+                string from = startDate.Date.Add(startTime).ToString("yyyy-MM-ddTHH:mm:ss");
+                string to = endDate.Date.Add(endTime).ToString("yyyy-MM-ddTHH:mm:ss");
+                string paymentFilter = (HistoryPaymentFilterComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "TODOS";
+
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
+                {
+                    MessageBox.Show("Configuração da nuvem ausente no .env.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                var payload = new { p_email = _donoEmail, p_password = _donoPassword, p_store_id = storeId, p_from = from, p_to = to, p_payment = paymentFilter };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_vendas_loja");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    MessageBox.Show($"Sem conexão com a nuvem ({(int)resp.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    SalesHistoryList.ItemsSource = null;
+                    return;
+                }
+
+                var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+                if (j["error"] != null)
+                {
+                    string err = j["error"]!.ToString();
+                    MessageBox.Show(err == "invalid_credentials"
+                        ? "Faça login ONLINE como dono para ver o histórico das lojas."
+                        : err == "forbidden" ? "Seu usuário não tem acesso." : err,
+                        "Rede", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    SalesHistoryList.ItemsSource = null;
+                    return;
+                }
+
+                var views = new List<SalesHistoryView>();
+                foreach (var v in (Newtonsoft.Json.Linq.JArray)j["vendas"]!)
+                {
+                    views.Add(new SalesHistoryView
+                    {
+                        Id = v["id"]?.ToString() ?? string.Empty,
+                        SaleDate = (DateTime)v["data"]!,
+                        Total = (int)(v["total_centavos"] ?? 0),
+                        PaymentMethod = v["metodo"]?.ToString() ?? string.Empty,
+                        PaymentStatus = v["status"]?.ToString() ?? string.Empty,
+                        ItemCount = (double)(v["itens"] ?? 0)
+                    });
+                }
+                SalesHistoryList.ItemsSource = views;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Sem conexão com a nuvem.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Diagnostics.Debug.WriteLine($"[LoadRemoteHistory Error]: {ex.Message}");
+            }
+        }
+
         private void AddProductButton_Click(object sender, RoutedEventArgs e)
         {
+            if (StockRemoteBlocked()) return;
             OpenProductFormWindow(null);
+        }
+
+        // No modo "editar loja remota" o dono só ajusta saldo; cadastro de produto é feito na loja.
+        private bool StockRemoteBlocked()
+        {
+            if (string.IsNullOrEmpty(_stockRemoteStoreId)) return false;
+            MessageBox.Show("Cadastro de produtos (novo/editar/excluir) é feito na própria loja.\n" +
+                "Aqui você ajusta apenas o saldo de estoque da loja selecionada.",
+                "Estoque da rede", MessageBoxButton.OK, MessageBoxImage.Information);
+            return true;
         }
 
         private async void EditProductButton_Click(object sender, RoutedEventArgs e)
         {
+            if (StockRemoteBlocked()) return;
             if (sender is Button btn && btn.Tag is string productId)
             {
                 try
@@ -2014,6 +2742,7 @@ namespace PdvPadaria
 
         private async void DeleteProductButton_Click(object sender, RoutedEventArgs e)
         {
+            if (StockRemoteBlocked()) return;
             if (sender is Button btn && btn.Tag is string productId)
             {
                 try
@@ -2110,11 +2839,20 @@ namespace PdvPadaria
 
         private void HistoryFilter_Click(object sender, RoutedEventArgs e)
         {
-            LoadSalesHistory();
+            if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
+            else _ = LoadRemoteHistory(_historyRemoteStoreId);
         }
 
         private async void CancelSaleButton_Click(object sender, RoutedEventArgs e)
         {
+            // Visualizando histórico de outra loja: cancelamento é feito na própria loja.
+            if (!string.IsNullOrEmpty(_historyRemoteStoreId))
+            {
+                MessageBox.Show("O cancelamento de uma venda é feito no caixa da própria loja.\n" +
+                    "Aqui você apenas visualiza o histórico e os cancelamentos da loja selecionada.",
+                    "Histórico da rede", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
             if (sender is Button btn && btn.Tag is string saleId)
             {
                 if (MessageBox.Show("Deseja realmente cancelar/estornar esta venda? O estoque dos produtos será devolvido.", "Confirmação", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -2365,6 +3103,7 @@ namespace PdvPadaria
 
         public class RedeLojaView
         {
+            public string StoreId { get; set; } = string.Empty;
             public string Nome { get; set; } = string.Empty;
             public string Resumo { get; set; } = string.Empty;
             public string FatString { get; set; } = string.Empty;
@@ -2461,6 +3200,7 @@ namespace PdvPadaria
                     int baixo = (int)l["estoque_baixo"]!;
                     lojas.Add(new RedeLojaView
                     {
+                        StoreId = l["storeId"]?.ToString() ?? string.Empty,
                         Nome = l["nome"]!.ToString(),
                         Resumo = $"{l["vendas_qtd"]} venda(s) · {l["estoque_produtos"]} produtos",
                         FatString = FormatBRL((long)l["faturamento_centavos"]!),
@@ -2469,6 +3209,8 @@ namespace PdvPadaria
                     });
                 }
                 RedeLojasList.ItemsSource = lojas;
+                _lojasCache = lojas;
+                BuildLojaTabs(lojas);
 
                 var tops = new List<RedeTopView>();
                 foreach (var t in (Newtonsoft.Json.Linq.JArray)j["top_produtos"]!)
@@ -2502,5 +3244,224 @@ namespace PdvPadaria
 
         private static string FormatBRL(long centavos)
             => (centavos / 100.0).ToString("C2", new System.Globalization.CultureInfo("pt-BR"));
+
+        // ---- Detalhe por loja (abas dinâmicas no painel do dono) ----
+
+        private (string from, string to) GetRedePeriodo()
+        {
+            var now = DateTime.Now;
+            DateTime de = _redePeriodoDias == 0 ? now.Date : now.Date.AddDays(-_redePeriodoDias);
+            DateTime ate = now.Date.AddDays(1).AddSeconds(-1);
+            return (de.ToString("yyyy-MM-ddTHH:mm:ss"), ate.ToString("yyyy-MM-ddTHH:mm:ss"));
+        }
+
+        private static string FmtQtd(double q)
+        {
+            if (Math.Abs(q - Math.Round(q)) < 0.001) return ((long)Math.Round(q)).ToString();
+            return q.ToString("0.###", new System.Globalization.CultureInfo("pt-BR"));
+        }
+
+        // Reconstrói as sub-abas por loja, mantendo a aba "Geral" (índice 0).
+        private void BuildLojaTabs(List<RedeLojaView> lojas)
+        {
+            string? selecionada = (RedeSubTabs.SelectedItem as TabItem)?.Tag as string;
+
+            for (int i = RedeSubTabs.Items.Count - 1; i >= 1; i--)
+                RedeSubTabs.Items.RemoveAt(i);
+
+            var template = (DataTemplate)RedeSubTabs.FindResource("LojaDetalheTemplate");
+            foreach (var loja in lojas)
+            {
+                if (string.IsNullOrEmpty(loja.StoreId)) continue;
+                var vm = new LojaDetalheVM { StoreId = loja.StoreId, Nome = loja.Nome };
+                var ti = new TabItem
+                {
+                    Header = loja.Nome,
+                    Tag = loja.StoreId,
+                    Content = vm,
+                    ContentTemplate = template
+                };
+                RedeSubTabs.Items.Add(ti);
+                if (loja.StoreId == selecionada)
+                    RedeSubTabs.SelectedItem = ti; // dispara SelectionChanged -> carrega detalhe
+            }
+        }
+
+        private void RedeSubTabs_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (!ReferenceEquals(e.OriginalSource, RedeSubTabs)) return;
+            if (RedeSubTabs.SelectedItem is TabItem ti && ti.Content is LojaDetalheVM vm && !vm.Loaded)
+                _ = LoadLojaDetalhe(vm);
+        }
+
+        private async Task LoadLojaDetalhe(LojaDetalheVM vm)
+        {
+            vm.Loaded = true;
+            vm.StatusVisible = Visibility.Collapsed;
+            try
+            {
+                var (from, to) = GetRedePeriodo();
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
+                {
+                    vm.ShowError("Configuração da nuvem ausente no .env.");
+                    return;
+                }
+
+                var payload = new
+                {
+                    p_email = _donoEmail,
+                    p_password = _donoPassword,
+                    p_store_id = vm.StoreId,
+                    p_from = from,
+                    p_to = to
+                };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_loja_detalhe");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    vm.ShowError($"Sem conexão com a nuvem ({(int)resp.StatusCode}).");
+                    return;
+                }
+
+                var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+                if (j["error"] != null)
+                {
+                    string err = j["error"]!.ToString();
+                    vm.ShowError(err == "invalid_credentials"
+                        ? "Faça login ONLINE como dono para ver o detalhe da loja."
+                        : err == "forbidden" ? "Seu usuário não tem acesso ao painel da rede." : err);
+                    return;
+                }
+
+                var resumo = j["resumo"]!;
+                vm.PeriodoText = _redePeriodoDias == 0 ? "Hoje" : $"Últimos {_redePeriodoDias} dias";
+                vm.FatString = FormatBRL((long)resumo["faturamento_centavos"]!);
+                vm.VendasString = resumo["vendas_qtd"]!.ToString();
+                long cancQtd = (long)resumo["cancelados_qtd"]!;
+                vm.CanceladosString = cancQtd == 0 ? "0"
+                    : $"{cancQtd} · {FormatBRL((long)resumo["cancelados_centavos"]!)}";
+                vm.EstoqueString = $"{resumo["estoque_produtos"]} / {resumo["estoque_baixo"]}";
+
+                var estoque = new List<EstoqueItemView>();
+                var estoqueBaixo = new List<EstoqueItemView>();
+                foreach (var p in (Newtonsoft.Json.Linq.JArray)j["estoque"]!)
+                {
+                    double q = (double)p["quantidade"]!;
+                    double m = (double)p["minimo"]!;
+                    bool baixo = (bool)p["baixo"]!;
+                    var item = new EstoqueItemView
+                    {
+                        Nome = p["nome"]!.ToString(),
+                        QtdMinString = $"{FmtQtd(q)} / mín {FmtQtd(m)}",
+                        TemAlerta = baixo ? Visibility.Visible : Visibility.Collapsed
+                    };
+                    estoque.Add(item);
+                    if (baixo) estoqueBaixo.Add(item);
+                }
+
+                var cancelamentos = new List<CancelItemView>();
+                foreach (var c in (Newtonsoft.Json.Linq.JArray)j["cancelamentos"]!)
+                {
+                    DateTime data = (DateTime)c["data"]!;
+                    cancelamentos.Add(new CancelItemView
+                    {
+                        DataString = data.ToString("dd/MM/yyyy HH:mm"),
+                        Detalhe = $"{c["metodo"]} · {c["usuario"]}",
+                        ValorString = "− " + FormatBRL((long)c["total_centavos"]!)
+                    });
+                }
+
+                vm.Estoque = estoque;
+                vm.EstoqueBaixo = estoqueBaixo;
+                vm.Cancelamentos = cancelamentos;
+                vm.TemAlerta = estoqueBaixo.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+                vm.SemCancelamentos = cancelamentos.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                vm.ShowError("Sem conexão com a nuvem.");
+                System.Diagnostics.Debug.WriteLine($"[LoadLojaDetalhe Error]: {ex.Message}");
+            }
+        }
+
+        public class EstoqueItemView
+        {
+            public string Nome { get; set; } = string.Empty;
+            public string QtdMinString { get; set; } = string.Empty;
+            public Visibility TemAlerta { get; set; } = Visibility.Collapsed;
+        }
+
+        public class CancelItemView
+        {
+            public string DataString { get; set; } = string.Empty;
+            public string Detalhe { get; set; } = string.Empty;
+            public string ValorString { get; set; } = string.Empty;
+        }
+
+        public class LojaDetalheVM : System.ComponentModel.INotifyPropertyChanged
+        {
+            public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+            private void On([System.Runtime.CompilerServices.CallerMemberName] string? n = null)
+                => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(n));
+
+            public string StoreId { get; set; } = string.Empty;
+            public bool Loaded { get; set; }
+
+            private string _nome = string.Empty;
+            public string Nome { get => _nome; set { _nome = value; On(); } }
+
+            private string _periodoText = "Carregando…";
+            public string PeriodoText { get => _periodoText; set { _periodoText = value; On(); } }
+
+            private string _statusText = string.Empty;
+            public string StatusText { get => _statusText; set { _statusText = value; On(); } }
+
+            private Visibility _statusVisible = Visibility.Collapsed;
+            public Visibility StatusVisible { get => _statusVisible; set { _statusVisible = value; On(); } }
+
+            private string _fat = "—";
+            public string FatString { get => _fat; set { _fat = value; On(); } }
+
+            private string _vendas = "—";
+            public string VendasString { get => _vendas; set { _vendas = value; On(); } }
+
+            private string _cancelados = "—";
+            public string CanceladosString { get => _cancelados; set { _cancelados = value; On(); } }
+
+            private string _estoque = "—";
+            public string EstoqueString { get => _estoque; set { _estoque = value; On(); } }
+
+            private Visibility _temAlerta = Visibility.Collapsed;
+            public Visibility TemAlerta { get => _temAlerta; set { _temAlerta = value; On(); } }
+
+            private Visibility _semCanc = Visibility.Collapsed;
+            public Visibility SemCancelamentos { get => _semCanc; set { _semCanc = value; On(); } }
+
+            private List<EstoqueItemView> _estoqueList = new();
+            public List<EstoqueItemView> Estoque { get => _estoqueList; set { _estoqueList = value; On(); } }
+
+            private List<EstoqueItemView> _baixoList = new();
+            public List<EstoqueItemView> EstoqueBaixo { get => _baixoList; set { _baixoList = value; On(); } }
+
+            private List<CancelItemView> _cancList = new();
+            public List<CancelItemView> Cancelamentos { get => _cancList; set { _cancList = value; On(); } }
+
+            public void ShowError(string msg)
+            {
+                StatusText = msg;
+                StatusVisible = Visibility.Visible;
+            }
+        }
     }
 }
