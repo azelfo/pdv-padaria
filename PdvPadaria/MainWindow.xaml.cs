@@ -1808,7 +1808,10 @@ namespace PdvPadaria
             }
             StockStoreSelector.SelectedIndex = 0; // abre no Modo Cadastro (local)
             _suppressStockStoreEvent = false;
-            _stockSelectorReady = true;
+            if (lojas.Count > 0)
+            {
+                _stockSelectorReady = true;
+            }
             _stockRemoteStoreId = ""; // 1ª opção = local
         }
 
@@ -2082,7 +2085,10 @@ namespace PdvPadaria
             if (_alertSelectorReady) return;
             var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
             FillStoreSelector(AlertStoreSelector, lojas);
-            _alertSelectorReady = true;
+            if (lojas.Count > 0)
+            {
+                _alertSelectorReady = true;
+            }
             // Alinha o estado à 1ª loja exibida no dropdown (alertas do dono abrem nessa loja via nuvem).
             _alertRemoteStoreId = (AlertStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
         }
@@ -2191,7 +2197,10 @@ namespace PdvPadaria
             }
             HistoryStoreSelector.SelectedIndex = 0;
             _suppressStockStoreEvent = false;
-            _historySelectorReady = true;
+            if (lojas.Count > 0)
+            {
+                _historySelectorReady = true;
+            }
             _historyRemoteStoreId = "TODAS";
         }
 
@@ -3045,7 +3054,10 @@ namespace PdvPadaria
             }
             DashStoreSelector.SelectedIndex = 0;
             _suppressStockStoreEvent = false;
-            _dashSelectorReady = true;
+            if (lojas.Count > 0)
+            {
+                _dashSelectorReady = true;
+            }
         }
 
         private async Task LoadRemoteDashboardRede(DateTime from, DateTime to)
