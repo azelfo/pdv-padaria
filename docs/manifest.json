@@ -1,24 +1,31 @@
 {
-  "name": "Painel Padaria Venâncio",
-  "short_name": "Padaria",
+  "name": "Padaria Venâncio",
+  "short_name": "Padaria Venâncio",
   "description": "Painel da rede — controle de vendas e estoque",
-  "start_url": ".",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#ffffff",
   "theme_color": "#F59E0B",
   "icons": [
     {
-      "src": "logo.png",
+      "src": "icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "logo.png",
+      "src": "icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
