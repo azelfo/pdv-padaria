@@ -13,6 +13,12 @@ namespace PdvPadaria.Views
 {
     public partial class LoginWindow : Window
     {
+        // HttpClient ÚNICO para todos os logins. Reusar evita esgotar sockets (TIME_WAIT 240s no Windows).
+        private static readonly System.Net.Http.HttpClient _httpClient = new System.Net.Http.HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(8)
+        };
+
         public LoginWindow()
         {
             InitializeComponent();
@@ -65,49 +71,48 @@ namespace PdvPadaria.Views
                 {
                     try
                     {
-                        using (var httpClient = new HttpClient())
+                        // Login server-side: a função RPC verifica a senha no banco
+                        // (pgcrypto) e devolve o usuário SEM o hash. A senha nunca é
+                        // exposta para a anon key, e o hash não trafega pela rede.
+                        var url = $"{supabaseUrl.TrimEnd('/')}/rest/v1/rpc/login_caixa";
+                        var rpcBody = new StringContent(
+                            JsonConvert.SerializeObject(new { p_email = email, p_senha = password }),
+                            System.Text.Encoding.UTF8,
+                            "application/json");
+
+                        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+                        request.Content = rpcBody;
+                        request.Headers.Add("apikey", supabaseAnonKey);
+                        request.Headers.Add("Authorization", "Bearer " + supabaseAnonKey);
+
+                        var response = await _httpClient.SendAsync(request);
+
+                        if (response.IsSuccessStatusCode)
                         {
-                            httpClient.Timeout = TimeSpan.FromSeconds(8); // Timeout rápido para não prender o operador
-                            httpClient.DefaultRequestHeaders.Add("apikey", supabaseAnonKey);
-                            httpClient.DefaultRequestHeaders.Add("Authorization", "Bearer " + supabaseAnonKey);
+                            var responseText = await response.Content.ReadAsStringAsync();
+                            var users = JsonConvert.DeserializeObject<List<User>>(responseText);
 
-                            // Login server-side: a função RPC verifica a senha no banco
-                            // (pgcrypto) e devolve o usuário SEM o hash. A senha nunca é
-                            // exposta para a anon key, e o hash não trafega pela rede.
-                            var url = $"{supabaseUrl.TrimEnd('/')}/rest/v1/rpc/login_caixa";
-                            var rpcBody = new StringContent(
-                                JsonConvert.SerializeObject(new { p_email = email, p_senha = password }),
-                                System.Text.Encoding.UTF8,
-                                "application/json");
-                            var response = await httpClient.PostAsync(url, rpcBody);
-
-                            if (response.IsSuccessStatusCode)
+                            if (users != null && users.Count > 0)
                             {
-                                var responseText = await response.Content.ReadAsStringAsync();
-                                var users = JsonConvert.DeserializeObject<List<User>>(responseText);
+                                var onlineUser = users[0];
 
-                                if (users != null && users.Count > 0)
-                                {
-                                    var onlineUser = users[0];
+                                // RPC já validou a senha no servidor. Grava localmente
+                                // como hash BCrypt (derivado da senha digitada) para
+                                // permitir login offline futuro deste operador.
+                                onlineUser.Password = PasswordHasher.Hash(password);
 
-                                    // RPC já validou a senha no servidor. Grava localmente
-                                    // como hash BCrypt (derivado da senha digitada) para
-                                    // permitir login offline futuro deste operador.
-                                    onlineUser.Password = PasswordHasher.Hash(password);
+                                var connection = App.Database.GetConnection();
+                                await connection.InsertOrReplaceAsync(onlineUser);
 
-                                    var connection = App.Database.GetConnection();
-                                    await connection.InsertOrReplaceAsync(onlineUser);
-
-                                    user = onlineUser;
-                                    isOnlineSuccess = true;
-                                }
-                                else
-                                {
-                                    // RPC retorna vazio tanto para senha errada quanto para
-                                    // e-mail inexistente/inativo (não revela qual dos dois).
-                                    ShowError("Credenciais inválidas. Verifique sua senha.");
-                                    return;
-                                }
+                                user = onlineUser;
+                                isOnlineSuccess = true;
+                            }
+                            else
+                            {
+                                // RPC retorna vazio tanto para senha errada quanto para
+                                // e-mail inexistente/inativo (não revela qual dos dois).
+                                ShowError("Credenciais inválidas. Verifique sua senha.");
+                                return;
                             }
                         }
                     }

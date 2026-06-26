@@ -14,6 +14,11 @@ namespace PdvPadaria.Views
 {
     public partial class SaleDetailsWindow : Window
     {
+        // HttpClient ÚNICO — reusar evita esgotar sockets (TIME_WAIT 240s no Windows).
+        private static readonly HttpClient _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        };
         private readonly string _saleId;
         private readonly string _remoteStoreId; // Vazio se for venda local
         private readonly User _currentUser;
@@ -81,8 +86,8 @@ namespace PdvPadaria.Views
             // Configura status
             bool isCanceled = sale.PaymentStatus == "CANCELADO";
             TxtStatus.Text = sale.PaymentStatus;
-            BorderStatus.Background = isCanceled ? new SolidColorBrush(Color.FromArgb(0x26, 0xEF, 0x44, 0x44)) : new SolidColorBrush(Color.FromArgb(0x26, 0x10, 0xB9, 0x81));
-            TxtStatus.Foreground = isCanceled ? Brushes.Red : new SolidColorBrush(Color.FromRgb(0x10, 0xB9, 0x81));
+            BorderStatus.Background = isCanceled ? AppColors.DangerBadge : AppColors.SuccessBadge;
+            TxtStatus.Foreground = isCanceled ? AppColors.Danger : AppColors.Success;
 
             // Botão cancelar visível apenas se for local e não cancelada
             BtnCancel.Visibility = isCanceled ? Visibility.Collapsed : Visibility.Visible;
@@ -123,15 +128,13 @@ namespace PdvPadaria.Views
             BtnCancel.Visibility = Visibility.Collapsed;
 
             // 1. Busca a Venda na nuvem
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            
             // Busca a venda usando a sintaxe select do Postgrest
             string saleUrl = $"{baseUrl}/rest/v1/Sale?id=eq.{_saleId}";
             using var reqSale = new HttpRequestMessage(HttpMethod.Get, saleUrl);
             reqSale.Headers.Add("apikey", anon);
             reqSale.Headers.Add("Authorization", $"Bearer {anon}");
 
-            var respSale = await client.SendAsync(reqSale);
+            var respSale = await _httpClient.SendAsync(reqSale);
             if (!respSale.IsSuccessStatusCode)
             {
                 MessageBox.Show($"Erro ao carregar dados da venda na nuvem ({(int)respSale.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -156,8 +159,8 @@ namespace PdvPadaria.Views
 
             bool isCanceled = sale.PaymentStatus == "CANCELADO";
             TxtStatus.Text = sale.PaymentStatus;
-            BorderStatus.Background = isCanceled ? new SolidColorBrush(Color.FromArgb(0x26, 0xEF, 0x44, 0x44)) : new SolidColorBrush(Color.FromArgb(0x26, 0x10, 0xB9, 0x81));
-            TxtStatus.Foreground = isCanceled ? Brushes.Red : new SolidColorBrush(Color.FromRgb(0x10, 0xB9, 0x81));
+            BorderStatus.Background = isCanceled ? AppColors.DangerBadge : AppColors.SuccessBadge;
+            TxtStatus.Foreground = isCanceled ? AppColors.Danger : AppColors.Success;
 
             // 2. Busca itens da venda associando produtos no Supabase (Join via select)
             string itemsUrl = $"{baseUrl}/rest/v1/SaleItem?saleId=eq.{_saleId}&select=*,product(name,unitMeasure)";
@@ -165,7 +168,7 @@ namespace PdvPadaria.Views
             reqItems.Headers.Add("apikey", anon);
             reqItems.Headers.Add("Authorization", $"Bearer {anon}");
 
-            var respItems = await client.SendAsync(reqItems);
+            var respItems = await _httpClient.SendAsync(reqItems);
             if (!respItems.IsSuccessStatusCode)
             {
                 MessageBox.Show($"Erro ao carregar itens da venda na nuvem ({(int)respItems.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);

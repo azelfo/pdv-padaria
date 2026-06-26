@@ -18,6 +18,7 @@ namespace PdvPadaria
         public static readonly Color TextPrimaryColor = Color.FromRgb(248, 250, 252);  // #F8FAFC
         public static readonly Color TextMutedColor   = Color.FromRgb(148, 163, 184);  // #94A3B8
         public static readonly Color DangerColor      = Color.FromRgb(239, 68, 68);    // #EF4444
+        public static readonly Color SuccessColor    = Color.FromRgb(16, 185, 129);   // #10B981
 
         // ===== Brushes (congelados) — uso direto em Foreground/Background/BorderBrush =====
         public static readonly SolidColorBrush BgBase      = Frozen(BgBaseColor);
@@ -27,6 +28,11 @@ namespace PdvPadaria
         public static readonly SolidColorBrush TextPrimary = Frozen(TextPrimaryColor);
         public static readonly SolidColorBrush TextMuted   = Frozen(TextMutedColor);
         public static readonly SolidColorBrush Danger      = Frozen(DangerColor);
+        public static readonly SolidColorBrush Success     = Frozen(SuccessColor);
+
+        // Badges com alpha (fundo sutil para indicadores de status)
+        public static readonly SolidColorBrush DangerBadge  = Frozen(Color.FromArgb(0x26, 0xEF, 0x44, 0x44)); // #26EF4444
+        public static readonly SolidColorBrush SuccessBadge = Frozen(Color.FromArgb(0x26, 0x10, 0xB9, 0x81)); // #2610B981
 
         private static SolidColorBrush Frozen(Color c)
         {
