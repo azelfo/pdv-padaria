@@ -152,15 +152,20 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
 .prod-badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;margin-left:6px;vertical-align:middle;text-transform:uppercase;letter-spacing:.3px}
 .prod-badge.prod{background:rgba(245,158,11,.15);color:var(--accent)}
 .prod-row{
-  display:grid;grid-template-columns:1fr auto auto;
-  align-items:center;gap:10px;
+  display:grid;grid-template-columns:1fr auto auto auto;
+  align-items:center;gap:8px;
   padding:14px 0;border-bottom:1px solid var(--line);
 }
 .prod-row:last-child{border-bottom:none}
-@media(max-width:360px){
-  .prod-row{grid-template-columns:1fr 1fr}
-  .prod-info{grid-column:1/3}
+@media(max-width:400px){
+  .prod-row{grid-template-columns:1fr auto auto}
+  .prod-info{grid-column:1/4}
 }
+.btn-del{
+  padding:10px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);
+  color:var(--red-soft);font-size:16px;border-radius:10px;min-width:44px;min-height:44px;
+}
+.btn-del:disabled{opacity:.5;cursor:default}
 .prod-nome{font-size:15px;font-weight:600}
 .prod-meta{font-size:12px;color:var(--muted);margin-top:2px}
 .qty-input{
@@ -400,6 +405,7 @@ function renderEstoque(){
       </div>
       <input type="number" class="qty-input" value="${p.quantidade}" min="0" step="${p.unitMeasure==='KG'?'0.001':'1'}" data-i="${i}" />
       <button class="btn-save" data-i="${i}" onclick="salvarItem(this)">Salvar</button>
+      <button class="btn-del" data-i="${i}" onclick="excluirItem(this)" title="Excluir produto">🗑</button>
     </div>`).join('');
 }
 
@@ -440,6 +446,42 @@ async function salvarItem(btn){
 
   btn.disabled = false;
   btn.textContent = 'Salvar';
+}
+
+async function excluirItem(btn){
+  const i = parseInt(btn.dataset.i);
+  const prod = window._estqProds[i];
+  if(!prod) return;
+
+  if(!confirm(`Excluir "${prod.nome}"?\n\nO produto será removido de todas as lojas e some do PDV no próximo sync. O histórico de vendas é preservado.`)) return;
+
+  btn.disabled = true;
+  btn.textContent = '...';
+  $('estqErr').classList.add('hidden');
+  $('estqOk').classList.add('hidden');
+
+  const res = await rpc('excluir_produto', {
+    p_email: creds.email,
+    p_password: creds.senha,
+    p_product_id: prod.productId
+  });
+
+  if(res.error){
+    $('estqErr').textContent =
+      res.error==='invalid_credentials' ? "Sessão expirada, faça login novamente." :
+      res.error==='not_found' ? "Produto não encontrado." : res.error;
+    $('estqErr').classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = '🗑';
+    return;
+  }
+
+  // Remove da lista em memória e re-renderiza
+  window._estqProds.splice(i, 1);
+  renderEstoque();
+  $('estqOk').textContent = `✓ ${prod.nome} excluído`;
+  $('estqOk').classList.remove('hidden');
+  setTimeout(()=>$('estqOk').classList.add('hidden'), 3000);
 }
 
 // ---- Login ----

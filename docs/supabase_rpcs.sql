@@ -188,3 +188,65 @@ BEGIN
   RETURN json_build_object('success', true, 'nova_quantidade', p_nova_quantidade);
 END;
 $$;
+
+
+-- ----------------------------------------------------------------
+-- RPC 3: excluir_produto
+-- Soft delete: marca o produto como active=false (NÃO remove a linha,
+-- preserva FK de Sale/SaleItem/StockMovement). O PDV propaga o flag no
+-- pull (puxa ativos+inativos) e o produto some das telas locais.
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION excluir_produto(
+  p_email      TEXT,
+  p_password   TEXT,
+  p_product_id TEXT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id   TEXT;
+  v_role      TEXT;
+  v_tenant_id TEXT;
+  v_prod_ok   BOOLEAN;
+BEGIN
+  SELECT id, role, "tenantId"
+    INTO v_user_id, v_role, v_tenant_id
+    FROM "User"
+   WHERE email = p_email
+     AND password = crypt(p_password, password)
+   LIMIT 1;
+
+  IF v_user_id IS NULL THEN
+    SELECT id, role, "tenantId"
+      INTO v_user_id, v_role, v_tenant_id
+      FROM "User"
+     WHERE email = p_email AND password = p_password
+     LIMIT 1;
+  END IF;
+
+  IF v_user_id IS NULL THEN
+    RETURN json_build_object('error', 'invalid_credentials');
+  END IF;
+
+  IF v_role != 'DONO' THEN
+    RETURN json_build_object('error', 'forbidden');
+  END IF;
+
+  SELECT EXISTS(
+    SELECT 1 FROM "Product" WHERE id = p_product_id AND "tenantId" = v_tenant_id
+  ) INTO v_prod_ok;
+
+  IF NOT v_prod_ok THEN
+    RETURN json_build_object('error', 'not_found');
+  END IF;
+
+  UPDATE "Product"
+     SET active = false, "updatedAt" = NOW()
+   WHERE id = p_product_id AND "tenantId" = v_tenant_id;
+
+  RETURN json_build_object('success', true);
+END;
+$$;

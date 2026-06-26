@@ -275,7 +275,11 @@ namespace PdvPadaria.Services
             {
                 // 1. Prepara as tasks em paralelo para performance máxima de rede
                 var categoriesTask = GetFromSupabaseAsync<Category>($"Category?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
-                var productsTask = GetFromSupabaseAsync<Product>($"Product?tenantId=eq.{Uri.EscapeDataString(tenantId)}&active=eq.true");
+                // Puxa TODOS os produtos (ativos e inativos). O flag Active é propagado para o
+                // SQLite local, então um produto desativado na nuvem (excluir_produto / dashboard)
+                // vira Active=false aqui e some das telas que filtram por Active. Isso dá o
+                // "apaguei na web → sumiu no PDV" sem hard delete (preserva FK das vendas locais).
+                var productsTask = GetFromSupabaseAsync<Product>($"Product?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
                 var storeProductsTask = GetFromSupabaseAsync<StoreProductDto>($"StoreProduct?storeId=eq.{Uri.EscapeDataString(storeId)}");
                 var breadConfigsTask = GetFromSupabaseAsync<BreadConfig>($"BreadConfig?storeId=eq.{Uri.EscapeDataString(storeId)}&active=eq.true");
 
@@ -338,6 +342,10 @@ namespace PdvPadaria.Services
                             }
                             else
                             {
+                                // Produto novo que já chega inativo da nuvem = foi excluído antes
+                                // mesmo de existir aqui. Não insere (evita poluir a base local).
+                                if (!prod.Active) continue;
+
                                 if (stockMap.TryGetValue(prod.Id, out var sp))
                                 {
                                     prod.LocalStockQuantity = sp.Quantity;
