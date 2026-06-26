@@ -295,7 +295,7 @@ namespace PdvPadaria
                 // Carrega dados específicos da aba
                 if (index == 1)
                 {
-                    _ = SetupStockStoreSelector();
+                    await SetupStockStoreSelector();
                     UpdateStockFilterButtons();
                     if (string.IsNullOrEmpty(_stockRemoteStoreId)) LoadStock();
                     else _ = LoadRemoteStock(_stockRemoteStoreId);
@@ -311,12 +311,14 @@ namespace PdvPadaria
                 }
                 else if (index == 3)
                 {
-                    _ = SetupDashStoreSelector();
+                    // await para o seletor (com "Todas as sedes") existir antes do load; senão a
+                    // 1a abertura caía no dashboard LOCAL enquanto o seletor ainda populava.
+                    await SetupDashStoreSelector();
                     LoadDashboard();
                 }
                 else if (index == 4)
                 {
-                    _ = SetupAlertStoreSelector();
+                    await SetupAlertStoreSelector();
                     if (string.IsNullOrEmpty(_alertRemoteStoreId)) LoadLowStockAlerts();
                     else _ = LoadRemoteAlerts(_alertRemoteStoreId);
                 }
@@ -1798,6 +1800,8 @@ namespace PdvPadaria
             StockStoreSelector.SelectedIndex = 0;
             _suppressStockStoreEvent = false;
             _stockSelectorReady = true;
+            // Alinha o estado à 1ª loja exibida no dropdown (estoque do dono abre nessa loja via nuvem).
+            _stockRemoteStoreId = (StockStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
         }
 
         // Busca a lista de lojas da rede (id + nome) reusando a RPC do painel do dono.
@@ -2071,6 +2075,8 @@ namespace PdvPadaria
             var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
             FillStoreSelector(AlertStoreSelector, lojas);
             _alertSelectorReady = true;
+            // Alinha o estado à 1ª loja exibida no dropdown (alertas do dono abrem nessa loja via nuvem).
+            _alertRemoteStoreId = (AlertStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
         }
 
         private void AlertStoreSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
