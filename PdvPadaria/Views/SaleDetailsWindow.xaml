@@ -121,7 +121,7 @@
                         Background="#26ef4444" Foreground="#ef4444" BorderThickness="1" BorderBrush="#ef4444" Cursor="Hand" Click="CancelButton_Click" Margin="15,0,0,0">
                     <Button.Resources>
                         <Style TargetType="Border">
-                            <CornerRadius Value="8"/>
+                            <Setter Property="CornerRadius" Value="8"/>
                         </Style>
                     </Button.Resources>
                 </Button>

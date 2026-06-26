@@ -26,6 +26,7 @@
         <SolidColorBrush x:Key="AccentHover" Color="#FBBF24"/>
         <SolidColorBrush x:Key="AccentTint"  Color="#1FF59E0B"/> <!-- fill ativo sutil -->
         <SolidColorBrush x:Key="AccentBadge" Color="#26F59E0B"/> <!-- badge/realce -->
+        <SolidColorBrush x:Key="DangerBadge" Color="#33EF4444"/> <!-- badge perigo/alerta -->
 
         <!-- ===== COR: texto ===== -->
         <SolidColorBrush x:Key="TextPrimary"   Color="#F8FAFC"/>
@@ -86,6 +87,66 @@
             <Setter Property="Foreground" Value="{StaticResource TextSubtle}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="FontWeight" Value="Bold"/>
+        </Style>
+
+        <!-- ===== GRADIENTE: título premium (dourado→laranja) ===== -->
+        <LinearGradientBrush x:Key="PremiumTextGradient" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="#fcd34d" Offset="0.0"/>
+            <GradientStop Color="#fb923c" Offset="1.0"/>
+        </LinearGradientBrush>
+
+        <!-- ===== ESTILO: cabeçalho de coluna em listas ===== -->
+        <Style x:Key="TextHeader" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextSubtle}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+        </Style>
+
+        <!-- ===== ESTILO: botão de atalho padrão do PDV ===== -->
+        <Style x:Key="ShortcutButton" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource Surface}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderSoft}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="15,10"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border CornerRadius="8" Background="{TemplateBinding Background}" BorderThickness="{TemplateBinding BorderThickness}" BorderBrush="{TemplateBinding BorderBrush}" Padding="{TemplateBinding Padding}"
+                                RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform>
+                                <ScaleTransform x:Name="St" ScaleX="1" ScaleY="1"/>
+                            </Border.RenderTransform>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{StaticResource SurfaceHover}"/>
+                                <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleX" To="0.96" Duration="0:0:0.06"/>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleY" To="0.96" Duration="0:0:0.06"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleX" To="1" Duration="0:0:0.1"/>
+                                            <DoubleAnimation Storyboard.TargetName="St" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0.1"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- =========================================================

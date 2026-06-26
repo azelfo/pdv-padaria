@@ -409,6 +409,19 @@ namespace PdvPadaria
 
         private void AddProductToCart(Product product, double quantity)
         {
+            double jaNoCarrinho = _cartItems.Where(i => i.ProductId == product.Id).Sum(i => i.Quantity);
+            double disponivel = product.LocalStockQuantity - jaNoCarrinho;
+            if (disponivel < quantity)
+            {
+                string estoqueStr = product.UnitMeasure == "KG"
+                    ? $"{product.LocalStockQuantity:F3} KG"
+                    : $"{(int)product.LocalStockQuantity} UN";
+                MessageBox.Show(
+                    $"Estoque insuficiente para '{product.Name}'.\nDisponível: {estoqueStr}.",
+                    "Sem Estoque", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             int itemSubtotal = (int)Math.Round(product.PriceSale * quantity);
 
             var existing = _cartItems.FirstOrDefault(i => i.CartItemId == product.Id);
@@ -917,6 +930,24 @@ namespace PdvPadaria
             try
             {
                 var connection = App.Database.GetConnection();
+
+                // Valida estoque antes de gravar — protege contra race condition
+                foreach (var cartItem in _cartItems)
+                {
+                    var prod = await connection.FindAsync<Product>(cartItem.ProductId);
+                    if (prod == null) continue;
+                    if (prod.LocalStockQuantity < cartItem.Quantity)
+                    {
+                        string estoqueStr = prod.UnitMeasure == "KG"
+                            ? $"{prod.LocalStockQuantity:F3} KG"
+                            : $"{(int)prod.LocalStockQuantity} UN";
+                        MessageBox.Show(
+                            $"Estoque insuficiente para '{prod.Name}'.\nDisponível: {estoqueStr}.\nRemova ou reduza a quantidade no carrinho.",
+                            "Sem Estoque", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+
                 var saleId = Guid.NewGuid().ToString();
 
                 string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
@@ -3152,12 +3183,7 @@ namespace PdvPadaria
             RedeStatus.Visibility = Visibility.Collapsed;
             try
             {
-                var now = DateTime.Now;
-                DateTime de = _redePeriodoDias == 0 ? now.Date : now.Date.AddDays(-_redePeriodoDias);
-                DateTime ate = now.Date.AddDays(1).AddSeconds(-1);
-                string from = de.ToString("yyyy-MM-ddTHH:mm:ss");
-                string to = ate.ToString("yyyy-MM-ddTHH:mm:ss");
-
+                var (from, to) = GetRedePeriodo();
                 string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
                 string anon = EnvService.Get("SUPABASE_ANON_KEY");
                 if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
@@ -3316,7 +3342,6 @@ namespace PdvPadaria
 
         private async Task LoadLojaDetalhe(LojaDetalheVM vm)
         {
-            vm.Loaded = true;
             vm.StatusVisible = Visibility.Collapsed;
             try
             {
@@ -3407,6 +3432,7 @@ namespace PdvPadaria
                 vm.Cancelamentos = cancelamentos;
                 vm.TemAlerta = estoqueBaixo.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
                 vm.SemCancelamentos = cancelamentos.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                vm.Loaded = true; // marca carregado só após sucesso
             }
             catch (Exception ex)
             {
