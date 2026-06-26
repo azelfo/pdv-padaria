@@ -405,3 +405,34 @@ BEGIN
   RETURN json_build_object('success', true, 'productId', v_new_id);
 END;
 $$;
+
+
+-- ----------------------------------------------------------------
+-- RPC 7: get_categorias
+-- Lista as categorias do tenant. Usado pelo dropdown de cadastro de
+-- produto no PDV (o painel web já recebe as categorias no get_loja_estoque).
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_categorias(
+  p_email TEXT, p_password TEXT
+)
+RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_user_id TEXT; v_role TEXT; v_tenant_id TEXT;
+BEGIN
+  SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
+    FROM "User"
+   WHERE email = p_email AND password = extensions.crypt(p_password, password)
+   LIMIT 1;
+  IF v_user_id IS NULL THEN
+    SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
+      FROM "User" WHERE email = p_email AND password = p_password LIMIT 1;
+  END IF;
+  IF v_user_id IS NULL THEN RETURN json_build_object('error','invalid_credentials'); END IF;
+  IF v_role != 'DONO' THEN RETURN json_build_object('error','forbidden'); END IF;
+
+  RETURN json_build_object('categorias', (
+    SELECT COALESCE(json_agg(json_build_object('id', c.id, 'nome', c.name) ORDER BY c.name), '[]'::json)
+    FROM "Category" c WHERE c."tenantId" = v_tenant_id
+  ));
+END;
+$$;

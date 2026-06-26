@@ -2351,8 +2351,8 @@ namespace PdvPadaria
 
         private void AddProductButton_Click(object sender, RoutedEventArgs e)
         {
-            if (StockRemoteBlocked()) return;
-            OpenProductFormWindow(null);
+            // Cadastro de produto agora é na nuvem (vale para todas as lojas), não mais local.
+            OpenNovoProdutoNuvem();
         }
 
         // No modo "editar loja remota" o dono só ajusta saldo; cadastro de produto é feito na loja.
@@ -2384,6 +2384,173 @@ namespace PdvPadaria
                     MessageBox.Show($"Erro ao buscar produto: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
+        }
+
+        // Cadastro de produto NOVO: cria no catálogo da NUVEM (disponível em todas as lojas,
+        // saldo zero). Cada loja ajusta a quantidade depois. Substitui o cadastro local antigo,
+        // que ficava preso a uma única loja. Edição segue em OpenProductFormWindow.
+        private async void OpenNovoProdutoNuvem()
+        {
+            if (string.IsNullOrEmpty(_donoEmail) || string.IsNullOrEmpty(_donoPassword))
+            {
+                MessageBox.Show("Para cadastrar um produto na rede, faça login ONLINE como dono.",
+                    "Novo produto", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+            string anon = EnvService.Get("SUPABASE_ANON_KEY");
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
+            {
+                MessageBox.Show("Configuração da nuvem ausente no .env.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            var formWindow = new Window
+            {
+                Title = "Novo Produto (rede)",
+                Width = 450,
+                Height = 520,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                WindowStyle = WindowStyle.ToolWindow,
+                Background = AppColors.Surface,
+                Foreground = AppColors.TextPrimary
+            };
+            var stack = new StackPanel { Margin = new Thickness(20) };
+            Func<string, FrameworkElement, StackPanel> createField = (labelStr, element) =>
+            {
+                var p = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+                p.Children.Add(new TextBlock { Text = labelStr, Foreground = AppColors.TextMuted, FontSize = 12, Margin = new Thickness(0, 0, 0, 4) });
+                p.Children.Add(element);
+                return p;
+            };
+            Func<TextBox> mkBox = () => new TextBox { Padding = new Thickness(8), FontSize = 14, Background = AppColors.BgBase, Foreground = System.Windows.Media.Brushes.White, BorderBrush = AppColors.BorderSoft };
+
+            var txtNome = mkBox();
+            var txtBarcode = mkBox();
+            var cmbCategoria = new ComboBox { Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
+            var cmbUnidade = new ComboBox { SelectedIndex = 0, Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
+            cmbUnidade.Items.Add("UN");
+            cmbUnidade.Items.Add("KG");
+            var txtPrecoVenda = mkBox(); txtPrecoVenda.Text = "0,00";
+            var txtPrecoCusto = mkBox(); txtPrecoCusto.Text = "0,00";
+
+            stack.Children.Add(new TextBlock { Text = "O produto fica disponível em todas as lojas (saldo zero). Cada loja ajusta a quantidade depois.", Foreground = AppColors.TextMuted, FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
+            stack.Children.Add(createField("Nome do Produto", txtNome));
+            stack.Children.Add(createField("Código de Barras (opcional)", txtBarcode));
+            stack.Children.Add(createField("Categoria", cmbCategoria));
+            stack.Children.Add(createField("Unidade de Medida", cmbUnidade));
+
+            var pricesGrid = new Grid { Margin = new Thickness(0, 0, 0, 15) };
+            pricesGrid.ColumnDefinitions.Add(new ColumnDefinition());
+            pricesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+            pricesGrid.ColumnDefinitions.Add(new ColumnDefinition());
+            var custoPanel = createField("Preço Custo (R$)", txtPrecoCusto);
+            var vendaPanel = createField("Preço Venda (R$)", txtPrecoVenda);
+            pricesGrid.Children.Add(custoPanel); Grid.SetColumn(custoPanel, 0);
+            pricesGrid.Children.Add(vendaPanel); Grid.SetColumn(vendaPanel, 2);
+            stack.Children.Add(pricesGrid);
+
+            var confirmBtn = new Button
+            {
+                Content = "Cadastrar Produto",
+                Padding = new Thickness(12),
+                Background = AppColors.Accent,
+                Foreground = AppColors.BgBase,
+                FontWeight = FontWeights.Bold,
+                IsEnabled = false
+            };
+            stack.Children.Add(confirmBtn);
+            formWindow.Content = new ScrollViewer { Content = stack };
+
+            // Carrega as categorias da nuvem para o dropdown
+            try
+            {
+                var payloadCat = new { p_email = _donoEmail, p_password = _donoPassword };
+                using var reqCat = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_categorias");
+                reqCat.Content = new System.Net.Http.StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(payloadCat), Encoding.UTF8, "application/json");
+                reqCat.Headers.Add("apikey", anon);
+                reqCat.Headers.Add("Authorization", "Bearer " + anon);
+                var respCat = await _redeHttp.SendAsync(reqCat);
+                var jCat = Newtonsoft.Json.Linq.JObject.Parse(await respCat.Content.ReadAsStringAsync());
+                if (jCat["categorias"] is Newtonsoft.Json.Linq.JArray arr)
+                    foreach (var c in arr)
+                        cmbCategoria.Items.Add(new ComboBoxItem { Content = c["nome"]?.ToString() ?? "", Tag = c["id"]?.ToString() ?? "" });
+                if (cmbCategoria.Items.Count > 0) { cmbCategoria.SelectedIndex = 0; confirmBtn.IsEnabled = true; }
+                else MessageBox.Show("Nenhuma categoria encontrada na nuvem.", "Novo produto", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Sem conexão com a nuvem para carregar as categorias.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Diagnostics.Debug.WriteLine($"[get_categorias Error]: {ex.Message}");
+                return;
+            }
+
+            confirmBtn.Click += async (s, ev) =>
+            {
+                string nome = txtNome.Text.Trim();
+                if (string.IsNullOrEmpty(nome)) { MessageBox.Show("O nome do produto é obrigatório.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+                if (!TryParseDouble(txtPrecoVenda.Text, out double vendaVal) || vendaVal < 0 ||
+                    !TryParseDouble(txtPrecoCusto.Text, out double custoVal) || custoVal < 0)
+                {
+                    MessageBox.Show("Preços inválidos.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return;
+                }
+                var catItem = cmbCategoria.SelectedItem as ComboBoxItem;
+                string catId = catItem?.Tag as string ?? "";
+                string catNome = catItem?.Content?.ToString() ?? "";
+                if (string.IsNullOrEmpty(catId)) { MessageBox.Show("Selecione uma categoria.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+                // tipo derivado da categoria (Produção Própria => produção; senão mercadoria normal)
+                string tipo = catNome.ToLower().Contains("produ") ? "PRODUCAO" : "NORMAL";
+                string unidade = cmbUnidade.SelectedItem?.ToString() ?? "UN";
+                string barcode = txtBarcode.Text.Trim();
+
+                confirmBtn.IsEnabled = false; confirmBtn.Content = "Cadastrando...";
+                try
+                {
+                    var payload = new
+                    {
+                        p_email = _donoEmail,
+                        p_password = _donoPassword,
+                        p_nome = nome,
+                        p_tipo = tipo,
+                        p_unidade = unidade,
+                        p_preco_venda = (int)Math.Round(vendaVal * 100),
+                        p_preco_custo = (int)Math.Round(custoVal * 100),
+                        p_categoria_id = catId,
+                        p_codigo_barras = string.IsNullOrEmpty(barcode) ? null : barcode
+                    };
+                    using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/criar_produto");
+                    req.Content = new System.Net.Http.StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                    req.Headers.Add("apikey", anon);
+                    req.Headers.Add("Authorization", "Bearer " + anon);
+                    var resp = await _redeHttp.SendAsync(req);
+                    var j = Newtonsoft.Json.Linq.JObject.Parse(await resp.Content.ReadAsStringAsync());
+                    if (j["error"] != null)
+                    {
+                        string err = j["error"]!.ToString();
+                        MessageBox.Show(err == "invalid_credentials" ? "Sessão do dono expirada, faça login online de novo." :
+                            err == "categoria_invalida" ? "Categoria inválida." :
+                            err == "nome_obrigatorio" ? "Informe o nome do produto." : err,
+                            "Novo produto", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        confirmBtn.IsEnabled = true; confirmBtn.Content = "Cadastrar Produto";
+                        return;
+                    }
+
+                    formWindow.Close();
+                    MessageBox.Show($"Produto \"{nome}\" cadastrado e disponível em todas as lojas.\nSincronizando para esta loja...", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
+                    await RunSincronizacaoSilenciosa();
+                    if (string.IsNullOrEmpty(_stockRemoteStoreId)) LoadStock(SearchStockBox.Text.Trim());
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Sem conexão com a nuvem para cadastrar o produto.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    System.Diagnostics.Debug.WriteLine($"[criar_produto Error]: {ex.Message}");
+                    confirmBtn.IsEnabled = true; confirmBtn.Content = "Cadastrar Produto";
+                }
+            };
+
+            formWindow.ShowDialog();
         }
 
         private async void OpenProductFormWindow(Product? productToEdit)
