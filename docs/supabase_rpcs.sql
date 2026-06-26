@@ -2,6 +2,9 @@
 -- PADARIA VENÂNCIO — RPCs para Ajuste de Estoque via Web/Mobile
 -- Execute no SQL Editor do Supabase (uma vez).
 -- Requer extensão pgcrypto (habilitada por padrão no Supabase).
+-- IMPORTANTE: no Supabase o pgcrypto fica no schema "extensions", então
+-- crypt() precisa ser qualificado como extensions.crypt() (search_path=public
+-- não enxerga o schema extensions). Sem isso, a RPC falha com erro 42883.
 -- ============================================================
 
 -- ----------------------------------------------------------------
@@ -30,7 +33,7 @@ BEGIN
     INTO v_user_id, v_role, v_tenant_id
     FROM "User"
    WHERE email = p_email
-     AND password = crypt(p_password, password)
+     AND password = extensions.crypt(p_password, password)
    LIMIT 1;
 
   -- Fallback plaintext (migração)
@@ -118,7 +121,7 @@ BEGIN
     INTO v_user_id, v_role, v_tenant_id
     FROM "User"
    WHERE email = p_email
-     AND password = crypt(p_password, password)
+     AND password = extensions.crypt(p_password, password)
    LIMIT 1;
 
   IF v_user_id IS NULL THEN
@@ -216,7 +219,7 @@ BEGIN
     INTO v_user_id, v_role, v_tenant_id
     FROM "User"
    WHERE email = p_email
-     AND password = crypt(p_password, password)
+     AND password = extensions.crypt(p_password, password)
    LIMIT 1;
 
   IF v_user_id IS NULL THEN
