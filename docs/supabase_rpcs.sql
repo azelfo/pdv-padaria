@@ -282,7 +282,7 @@ BEGIN
   IF v_role NOT IN ('DONO','GERENTE') THEN RETURN jsonb_build_object('error','forbidden'); END IF;
 
   WITH base AS (
-    SELECT s.id, s."saleDate", s.total, s."paymentMethod", s."paymentStatus",
+    SELECT s.id, s."storeId", s."saleDate", s.total, s."paymentMethod", s."paymentStatus",
            st.name AS loja_nome,
            COALESCE((SELECT sum(si.quantity) FROM "SaleItem" si WHERE si."saleId" = s.id),0) AS itens
     FROM "Sale" s
@@ -295,7 +295,7 @@ BEGIN
     LIMIT 500
   )
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
-    'id', b.id, 'data', b."saleDate", 'total_centavos', b.total,
+    'id', b.id, 'storeId', b."storeId", 'data', b."saleDate", 'total_centavos', b.total,
     'metodo', b."paymentMethod", 'status', b."paymentStatus",
     'loja', b.loja_nome, 'itens', b.itens)), '[]'::jsonb)
   INTO v_result FROM base b;

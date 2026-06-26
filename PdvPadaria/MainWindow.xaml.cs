@@ -196,6 +196,7 @@ namespace PdvPadaria
         public class SalesHistoryView
         {
             public string Id { get; set; } = string.Empty;
+            public string StoreId { get; set; } = string.Empty; // loja da venda (usado no modo "Todas as sedes")
             public DateTime SaleDate { get; set; }
             public int Total { get; set; }
             public string PaymentMethod { get; set; } = string.Empty;
@@ -306,7 +307,8 @@ namespace PdvPadaria
                     // setup async ainda não definiu _historyRemoteStoreId e o histórico carregava
                     // as vendas locais enquanto o dropdown já mostrava a 1ª loja (filtro fantasma).
                     await SetupHistoryStoreSelector();
-                    if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
+                    if (_historyRemoteStoreId == "TODAS") _ = LoadAllStoresHistory();
+                    else if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
                     else _ = LoadRemoteHistory(_historyRemoteStoreId);
                 }
                 else if (index == 3)
@@ -1792,16 +1794,18 @@ namespace PdvPadaria
             var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
             _suppressStockStoreEvent = true;
             StockStoreSelector.Items.Clear();
+            // 1ª opção = estoque LOCAL desta máquina, onde o cadastro (novo/editar/excluir) é
+            // permitido. As demais opções são as lojas da rede (via nuvem), só ajuste de saldo.
+            StockStoreSelector.Items.Add(new ComboBoxItem { Content = "📝 Modo Cadastro (Estoque Local)", Tag = "" });
             foreach (var l in lojas)
             {
                 if (string.IsNullOrEmpty(l.StoreId)) continue;
                 StockStoreSelector.Items.Add(new ComboBoxItem { Content = l.Nome, Tag = l.StoreId });
             }
-            StockStoreSelector.SelectedIndex = 0;
+            StockStoreSelector.SelectedIndex = 0; // abre no Modo Cadastro (local)
             _suppressStockStoreEvent = false;
             _stockSelectorReady = true;
-            // Alinha o estado à 1ª loja exibida no dropdown (estoque do dono abre nessa loja via nuvem).
-            _stockRemoteStoreId = (StockStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+            _stockRemoteStoreId = ""; // 1ª opção = local
         }
 
         // Busca a lista de lojas da rede (id + nome) reusando a RPC do painel do dono.
@@ -2171,11 +2175,20 @@ namespace PdvPadaria
             HistoryStorePanel.Visibility = Visibility.Visible;
             if (_historySelectorReady) return;
             var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
-            FillStoreSelector(HistoryStoreSelector, lojas);
+            // 1ª opção = "Todas as sedes" (consolida todas as lojas via nuvem). As demais filtram
+            // por loja. O histórico do dono abre em "Todas as sedes" por padrão.
+            _suppressStockStoreEvent = true;
+            HistoryStoreSelector.Items.Clear();
+            HistoryStoreSelector.Items.Add(new ComboBoxItem { Content = "Todas as sedes", Tag = "TODAS" });
+            foreach (var l in lojas)
+            {
+                if (string.IsNullOrEmpty(l.StoreId)) continue;
+                HistoryStoreSelector.Items.Add(new ComboBoxItem { Content = l.Nome, Tag = l.StoreId });
+            }
+            HistoryStoreSelector.SelectedIndex = 0;
+            _suppressStockStoreEvent = false;
             _historySelectorReady = true;
-            // Alinha o estado à 1ª loja que o dropdown passou a exibir, para o histórico do dono
-            // já abrir mostrando as vendas DAQUELA loja (via nuvem), e não o histórico local.
-            _historyRemoteStoreId = (HistoryStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+            _historyRemoteStoreId = "TODAS";
         }
 
         private void HistoryStoreSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -2183,7 +2196,8 @@ namespace PdvPadaria
             if (_suppressStockStoreEvent) return;
             string storeId = (HistoryStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
             _historyRemoteStoreId = storeId;
-            if (string.IsNullOrEmpty(storeId)) LoadSalesHistory();
+            if (storeId == "TODAS") _ = LoadAllStoresHistory();
+            else if (string.IsNullOrEmpty(storeId)) LoadSalesHistory();
             else _ = LoadRemoteHistory(storeId);
         }
 
@@ -2257,6 +2271,81 @@ namespace PdvPadaria
             {
                 MessageBox.Show("Sem conexão com a nuvem.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
                 System.Diagnostics.Debug.WriteLine($"[LoadRemoteHistory Error]: {ex.Message}");
+            }
+        }
+
+        // Carrega o histórico consolidado de TODAS as lojas (modo "Todas as sedes") via get_vendas_rede.
+        private async Task LoadAllStoresHistory()
+        {
+            try
+            {
+                DateTime startDate = HistoryStartDatePicker.SelectedDate ?? DateTime.Today;
+                DateTime endDate = HistoryEndDatePicker.SelectedDate ?? DateTime.Today;
+                if (!TimeSpan.TryParse(HistoryStartTimeTextBox.Text.Trim(), out TimeSpan startTime)) startTime = new TimeSpan(0, 0, 0);
+                if (!TimeSpan.TryParse(HistoryEndTimeTextBox.Text.Trim(), out TimeSpan endTime)) endTime = new TimeSpan(23, 59, 59);
+                string from = startDate.Date.Add(startTime).ToString("yyyy-MM-ddTHH:mm:ss");
+                string to = endDate.Date.Add(endTime).ToString("yyyy-MM-ddTHH:mm:ss");
+                string paymentFilter = (HistoryPaymentFilterComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "TODOS";
+
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
+                {
+                    MessageBox.Show("Configuração da nuvem ausente no .env.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                // p_store_id null = todas as lojas do tenant.
+                var payload = new { p_email = _donoEmail, p_password = _donoPassword, p_from = from, p_to = to, p_store_id = (string?)null, p_payment = paymentFilter };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_vendas_rede");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    MessageBox.Show($"Sem conexão com a nuvem ({(int)resp.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    SalesHistoryList.ItemsSource = null;
+                    return;
+                }
+
+                var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+                if (j["error"] != null)
+                {
+                    string err = j["error"]!.ToString();
+                    MessageBox.Show(err == "invalid_credentials"
+                        ? "Faça login ONLINE como dono para ver o histórico das lojas."
+                        : err == "forbidden" ? "Seu usuário não tem acesso." : err,
+                        "Rede", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    SalesHistoryList.ItemsSource = null;
+                    return;
+                }
+
+                var views = new List<SalesHistoryView>();
+                foreach (var v in (Newtonsoft.Json.Linq.JArray)j["vendas"]!)
+                {
+                    views.Add(new SalesHistoryView
+                    {
+                        Id = v["id"]?.ToString() ?? string.Empty,
+                        StoreId = v["storeId"]?.ToString() ?? string.Empty,
+                        SaleDate = (DateTime)v["data"]!,
+                        Total = (int)(v["total_centavos"] ?? 0),
+                        PaymentMethod = v["metodo"]?.ToString() ?? string.Empty,
+                        PaymentStatus = v["status"]?.ToString() ?? string.Empty,
+                        ItemCount = (double)(v["itens"] ?? 0)
+                    });
+                }
+                SalesHistoryList.ItemsSource = views;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Sem conexão com a nuvem.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Diagnostics.Debug.WriteLine($"[LoadAllStoresHistory Error]: {ex.Message}");
             }
         }
 
@@ -2657,7 +2746,8 @@ namespace PdvPadaria
 
         private void HistoryFilter_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
+            if (_historyRemoteStoreId == "TODAS") _ = LoadAllStoresHistory();
+            else if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
             else _ = LoadRemoteHistory(_historyRemoteStoreId);
         }
 
@@ -2665,7 +2755,10 @@ namespace PdvPadaria
         {
             if (SalesHistoryList.SelectedItem is SalesHistoryView selectedSale)
             {
-                var win = new Views.SaleDetailsWindow(selectedSale.Id, _historyRemoteStoreId, CurrentUser, _donoEmail, _donoPassword)
+                // No modo "Todas as sedes" cada venda tem sua própria loja; usa a loja da venda
+                // (não o "TODAS" do seletor) para o detalhe/cancelamento abrir na loja certa.
+                string detailStore = _historyRemoteStoreId == "TODAS" ? selectedSale.StoreId : _historyRemoteStoreId;
+                var win = new Views.SaleDetailsWindow(selectedSale.Id, detailStore, CurrentUser, _donoEmail, _donoPassword)
                 {
                     Owner = this
                 };
@@ -2674,7 +2767,8 @@ namespace PdvPadaria
                 // Se a venda foi cancelada dentro da janela de detalhes, recarrega o histórico
                 if (win.WasCanceled)
                 {
-                    if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
+                    if (_historyRemoteStoreId == "TODAS") _ = LoadAllStoresHistory();
+                    else if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
                     else _ = LoadRemoteHistory(_historyRemoteStoreId);
 
                     _ = Task.Run(async () => await RunSincronizacaoSilenciosa());
@@ -3072,9 +3166,18 @@ namespace PdvPadaria
             SyncButton.IsEnabled = true;
             SyncButton.Content = "Sincronizar Agora";
 
-            // Recarrega aba aberta
-            if (MainTabControl.SelectedIndex == 1) LoadStock(SearchStockBox.Text.Trim());
-            else if (MainTabControl.SelectedIndex == 2) LoadSalesHistory();
+            // Recarrega aba aberta (respeitando o filtro de loja do dono)
+            if (MainTabControl.SelectedIndex == 1)
+            {
+                if (string.IsNullOrEmpty(_stockRemoteStoreId)) LoadStock(SearchStockBox.Text.Trim());
+                else _ = LoadRemoteStock(_stockRemoteStoreId);
+            }
+            else if (MainTabControl.SelectedIndex == 2)
+            {
+                if (_historyRemoteStoreId == "TODAS") _ = LoadAllStoresHistory();
+                else if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
+                else _ = LoadRemoteHistory(_historyRemoteStoreId);
+            }
             else if (MainTabControl.SelectedIndex == 3) LoadDashboard();
         }
 
