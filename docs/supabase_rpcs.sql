@@ -62,29 +62,25 @@ BEGIN
     RETURN json_build_object('error', 'forbidden');
   END IF;
 
-  RETURN (
-    SELECT json_build_object(
-      'produtos', COALESCE(
-        json_agg(
-          json_build_object(
-            'productId',   p.id,
-            'nome',        p.name,
-            'tipo',        p.type,
-            'unitMeasure', p."unitMeasure",
-            'quantidade',  COALESCE(sp.quantity, 0),
-            'minimo',      COALESCE(sp."minStock", 0)
-          )
-          ORDER BY p.name
-        ),
-        '[]'::json
-      )
+  RETURN json_build_object(
+    'produtos', (
+      SELECT COALESCE(json_agg(json_build_object(
+        'productId',   p.id,
+        'nome',        p.name,
+        'tipo',        p.type,
+        'unitMeasure', p."unitMeasure",
+        'quantidade',  COALESCE(sp.quantity, 0),
+        'minimo',      COALESCE(sp."minStock", 0)
+      ) ORDER BY p.name), '[]'::json)
+      FROM "Product" p
+      LEFT JOIN "StoreProduct" sp ON sp."productId" = p.id AND sp."storeId" = p_store_id
+      WHERE p."tenantId" = v_tenant_id AND p.active = true
+    ),
+    -- categorias do tenant (para o dropdown do cadastro de produto no painel web)
+    'categorias', (
+      SELECT COALESCE(json_agg(json_build_object('id', c.id, 'nome', c.name) ORDER BY c.name), '[]'::json)
+      FROM "Category" c WHERE c."tenantId" = v_tenant_id
     )
-    FROM "Product" p
-    LEFT JOIN "StoreProduct" sp
-           ON sp."productId" = p.id
-          AND sp."storeId"   = p_store_id
-    WHERE p."tenantId" = v_tenant_id
-      AND p.active = true
   );
 END;
 $$;
@@ -352,5 +348,60 @@ BEGIN
     'total_centavos', v_sale.total, 'recebido_centavos', v_sale."receivedAmount",
     'troco_centavos', v_sale."changeAmount", 'itens', v_itens
   );
+END;
+$$;
+
+
+-- ----------------------------------------------------------------
+-- RPC 6: criar_produto
+-- Cria um produto no catálogo do tenant (nuvem). Assim que criado, ele
+-- aparece em TODAS as lojas (get_loja_estoque faz LEFT JOIN com saldo 0)
+-- e o PDV o recebe no próximo sync. Preços em centavos (int).
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION criar_produto(
+  p_email          TEXT,
+  p_password       TEXT,
+  p_nome           TEXT,
+  p_tipo           TEXT,
+  p_unidade        TEXT,
+  p_preco_venda    INT,
+  p_preco_custo    INT,
+  p_categoria_id   TEXT,
+  p_codigo_barras  TEXT DEFAULT NULL
+)
+RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_user_id TEXT; v_role TEXT; v_tenant_id TEXT; v_cat_ok BOOLEAN; v_new_id TEXT;
+BEGIN
+  SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
+    FROM "User"
+   WHERE email = p_email AND password = extensions.crypt(p_password, password)
+   LIMIT 1;
+  IF v_user_id IS NULL THEN
+    SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
+      FROM "User" WHERE email = p_email AND password = p_password LIMIT 1;
+  END IF;
+  IF v_user_id IS NULL THEN RETURN json_build_object('error','invalid_credentials'); END IF;
+  IF v_role != 'DONO' THEN RETURN json_build_object('error','forbidden'); END IF;
+
+  IF p_nome IS NULL OR length(trim(p_nome)) = 0 THEN
+    RETURN json_build_object('error','nome_obrigatorio');
+  END IF;
+
+  SELECT EXISTS(SELECT 1 FROM "Category" WHERE id = p_categoria_id AND "tenantId" = v_tenant_id) INTO v_cat_ok;
+  IF NOT v_cat_ok THEN RETURN json_build_object('error','categoria_invalida'); END IF;
+
+  v_new_id := gen_random_uuid()::text;
+
+  INSERT INTO "Product"
+    (id, name, barcode, "priceSale", "priceCost", type, "unitMeasure", active,
+     "categoryId", "tenantId", "createdAt", "updatedAt")
+  VALUES
+    (v_new_id, trim(p_nome), NULLIF(trim(COALESCE(p_codigo_barras,'')), ''),
+     COALESCE(p_preco_venda,0), COALESCE(p_preco_custo,0),
+     COALESCE(NULLIF(p_tipo,''),'NORMAL'), COALESCE(NULLIF(p_unidade,''),'UN'),
+     true, p_categoria_id, v_tenant_id, NOW(), NOW());
+
+  RETURN json_build_object('success', true, 'productId', v_new_id);
 END;
 $$;

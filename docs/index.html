@@ -307,6 +307,8 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
 
       <input id="estqBusca" type="search" placeholder="Buscar produto..." style="margin-bottom:12px" />
 
+      <button class="btn-primary" id="novoProdBtn" style="margin-top:0;margin-bottom:12px">+ Novo produto</button>
+
       <div class="estq-filters">
         <button data-f="TODOS" class="on">Todos</button>
         <button data-f="COMERCIAIS">Comerciais</button>
@@ -375,6 +377,40 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
       <button class="modal-close" id="vendaModalClose">✕</button>
     </div>
     <div id="vendaModalBody"></div>
+  </div>
+</div>
+
+<!-- ===== MODAL: NOVO PRODUTO ===== -->
+<div id="prodModal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Novo produto</div>
+      <button class="modal-close" id="prodModalClose">✕</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">O produto fica disponível em todas as lojas. Depois é só lançar a quantidade de cada uma.</div>
+
+    <label>Nome do produto</label>
+    <input id="prodNome" type="text" placeholder="ex: Refrigerante 2L" />
+
+    <label>Categoria</label>
+    <select id="prodCategoria"></select>
+
+    <label>Unidade de medida</label>
+    <select id="prodUnidade">
+      <option value="UN">Unidade (UN)</option>
+      <option value="KG">Quilo (KG)</option>
+    </select>
+
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><label>Preço de venda (R$)</label><input id="prodPrecoVenda" type="number" min="0" step="0.01" placeholder="0,00" /></div>
+      <div style="flex:1"><label>Preço de custo (R$)</label><input id="prodPrecoCusto" type="number" min="0" step="0.01" placeholder="0,00" /></div>
+    </div>
+
+    <label>Código de barras (opcional)</label>
+    <input id="prodBarras" type="text" inputmode="numeric" placeholder="opcional" />
+
+    <button class="btn-primary" id="prodSalvar">Cadastrar produto</button>
+    <div id="prodErr" class="err hidden"></div>
   </div>
 </div>
 
@@ -483,6 +519,7 @@ async function carregarEstoque(){
   }
 
   window._estqProds = data.produtos||[];
+  window._estqCategorias = data.categorias||[];
   $('estqCard').dataset.storeId = storeId;
   renderEstoque();
 }
@@ -600,6 +637,67 @@ async function excluirItem(btn){
   $('estqOk').textContent = `✓ ${prod.nome} excluído`;
   $('estqOk').classList.remove('hidden');
   setTimeout(()=>$('estqOk').classList.add('hidden'), 3000);
+}
+
+// ---- Novo produto ----
+// Nome da categoria que conta como "produção própria" (define o tipo do produto).
+function categoriaEhProducao(nome){ return (nome||'').toLowerCase().includes('produ'); }
+
+function abrirNovoProduto(){
+  const cats = window._estqCategorias || [];
+  if(!cats.length){
+    $('estqErr').textContent = "Selecione uma loja primeiro (as categorias carregam com o estoque).";
+    $('estqErr').classList.remove('hidden');
+    return;
+  }
+  $('prodCategoria').innerHTML = cats.map(c=>`<option value="${c.id}" data-nome="${c.nome}">${c.nome}</option>`).join('');
+  $('prodNome').value=''; $('prodPrecoVenda').value=''; $('prodPrecoCusto').value=''; $('prodBarras').value='';
+  $('prodUnidade').value='UN';
+  $('prodErr').classList.add('hidden');
+  $('prodModal').classList.remove('hidden');
+  $('prodNome').focus();
+}
+function fecharNovoProduto(){ $('prodModal').classList.add('hidden'); }
+
+async function salvarNovoProduto(){
+  const nome = $('prodNome').value.trim();
+  if(!nome){ $('prodNome').focus(); return; }
+  const catOpt = $('prodCategoria').selectedOptions[0];
+  const catId = catOpt?.value;
+  const catNome = catOpt?.dataset.nome || '';
+  const tipo = categoriaEhProducao(catNome) ? 'PRODUCAO' : 'NORMAL';
+  const unidade = $('prodUnidade').value;
+  const precoVenda = Math.round(parseFloat($('prodPrecoVenda').value||'0')*100);
+  const precoCusto = Math.round(parseFloat($('prodPrecoCusto').value||'0')*100);
+  const barras = $('prodBarras').value.trim();
+
+  $('prodErr').classList.add('hidden');
+  const btn = $('prodSalvar');
+  btn.disabled = true; btn.textContent = 'Cadastrando...';
+
+  const res = await rpc('criar_produto', {
+    p_email: creds.email, p_password: creds.senha,
+    p_nome: nome, p_tipo: tipo, p_unidade: unidade,
+    p_preco_venda: precoVenda, p_preco_custo: precoCusto,
+    p_categoria_id: catId, p_codigo_barras: barras || null
+  });
+
+  btn.disabled = false; btn.textContent = 'Cadastrar produto';
+
+  if(res.error){
+    $('prodErr').textContent =
+      res.error==='invalid_credentials' ? "Sessão expirada, faça login novamente." :
+      res.error==='nome_obrigatorio' ? "Informe o nome do produto." :
+      res.error==='categoria_invalida' ? "Categoria inválida." : res.error;
+    $('prodErr').classList.remove('hidden');
+    return;
+  }
+
+  fecharNovoProduto();
+  await carregarEstoque(); // recarrega a lista (produto já aparece na loja atual)
+  $('estqOk').textContent = `✓ "${nome}" cadastrado e disponível em todas as lojas`;
+  $('estqOk').classList.remove('hidden');
+  setTimeout(()=>$('estqOk').classList.add('hidden'), 4000);
 }
 
 // ---- Login ----
@@ -830,6 +928,12 @@ document.querySelectorAll('.estq-filters button').forEach(b=>{
 
 // ---- Busca de estoque ----
 $('estqBusca').oninput = renderEstoque;
+
+// ---- Novo produto ----
+$('novoProdBtn').onclick = abrirNovoProduto;
+$('prodModalClose').onclick = fecharNovoProduto;
+$('prodSalvar').onclick = salvarNovoProduto;
+$('prodModal').onclick = (e)=>{ if(e.target===$('prodModal')) fecharNovoProduto(); };
 
 // ---- PWA: Service Worker ----
 if('serviceWorker' in navigator){
