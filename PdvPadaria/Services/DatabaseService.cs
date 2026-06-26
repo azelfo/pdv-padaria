@@ -1,7 +1,6 @@
 using SQLite;
 using System;
 using System.IO;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 using PdvPadaria.Models;
 
@@ -65,7 +64,7 @@ namespace PdvPadaria.Services
                     {
                         Id = "local-admin",
                         Name = "Marcelo Dono",
-                        Email = "dono@padaria.com.br",
+                        Email = "dono@padaria.com", // deve casar com o User do Supabase (login offline na 1ª vez)
                         Password = PasswordHasher.Hash("123"), // hash BCrypt; troque a senha no 1o login
                         Role = "DONO",
                         TenantId = tenantId,
@@ -159,38 +158,11 @@ namespace PdvPadaria.Services
             return conn;
         }
 
-        #region Métodos de Conveniência (Operações Básicas)
-
-        public async Task<List<T>> GetAllAsync<T>() where T : new()
-        {
-            return await _database.Table<T>().ToListAsync();
-        }
-
-        public async Task<T> GetByIdAsync<T>(string id) where T : new()
-        {
-            return await _database.FindAsync<T>(id);
-        }
-
-        public async Task<int> InsertAsync<T>(T entity)
-        {
-            return await _database.InsertAsync(entity);
-        }
-
-        public async Task<int> UpdateAsync<T>(T entity)
-        {
-            return await _database.UpdateAsync(entity);
-        }
-
-        public async Task<int> DeleteAsync<T>(T entity)
-        {
-            return await _database.DeleteAsync(entity);
-        }
-
+        // Executa um bloco transacional atômico na conexão principal (usado na finalização
+        // de venda, cancelamento e ajustes — tudo-ou-nada).
         public async Task RunInTransactionAsync(Action<SQLiteConnection> action)
         {
             await _database.RunInTransactionAsync(action);
         }
-
-        #endregion
     }
 }

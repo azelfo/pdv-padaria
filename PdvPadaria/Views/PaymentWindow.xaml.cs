@@ -46,6 +46,7 @@ namespace PdvPadaria.Views
         private void SetPaymentMode(PaymentMode mode)
         {
             _delayCts?.Cancel();
+            _delayCts?.Dispose();
             _delayCts = null;
             _paymentDelayRemaining = 0;
 
@@ -116,6 +117,15 @@ namespace PdvPadaria.Views
         {
             DialogResult = false;
             Close();
+        }
+
+        // Garante a liberação do CancellationTokenSource ao fechar a janela (evita leak de handle).
+        protected override void OnClosed(EventArgs e)
+        {
+            _delayCts?.Cancel();
+            _delayCts?.Dispose();
+            _delayCts = null;
+            base.OnClosed(e);
         }
 
         private void BtnSelectCash_Click(object sender, RoutedEventArgs e)

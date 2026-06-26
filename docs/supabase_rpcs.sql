@@ -184,6 +184,12 @@ BEGIN
     );
   END IF;
 
+  -- Mesmo canal do set_estoque_loja: o PDV da loja aplica este ajuste no próximo sync
+  -- (ApplyOwnerAdjustmentsAsync lê OwnerStockAdjustment). Sem isto, o ajuste feito pelo
+  -- painel web não desceria para o PDV da loja.
+  INSERT INTO "OwnerStockAdjustment" ("id","tenantId","storeId","productId","quantity","minStock","createdBy")
+  VALUES (gen_random_uuid()::text, v_tenant_id, p_store_id, p_product_id, p_nova_quantidade, NULL, v_user_id);
+
   RETURN json_build_object('success', true, 'nova_quantidade', p_nova_quantidade);
 END;
 $$;
