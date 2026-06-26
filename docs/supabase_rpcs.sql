@@ -66,6 +66,7 @@ BEGIN
           json_build_object(
             'productId',   p.id,
             'nome',        p.name,
+            'tipo',        p.type,
             'unitMeasure', p."unitMeasure",
             'quantidade',  COALESCE(sp.quantity, 0),
             'minimo',      COALESCE(sp."minStock", 0)
