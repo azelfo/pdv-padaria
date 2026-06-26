@@ -1199,13 +1199,14 @@
                         </Grid>
                     </Border>
 
-                    <!-- Cards Métricas Principais (1x4) -->
+                    <!-- Cards Métricas Principais (1x5, 5ª coluna = Lucro só DONO) -->
                     <Grid Grid.Row="1" Margin="0,0,0,20">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="*"/>
+                            <ColumnDefinition x:Name="DashProfitColumn" Width="0"/>
                         </Grid.ColumnDefinitions>
 
                         <!-- Card Faturamento -->
@@ -1269,7 +1270,7 @@
                         </Border>
 
                         <!-- Card Cancelamentos -->
-                        <Border Grid.Column="3" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1" CornerRadius="12" Effect="{StaticResource ElevCard}">
+                        <Border Grid.Column="3" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1" CornerRadius="12" Margin="0,0,10,0" Effect="{StaticResource ElevCard}">
                             <Border.Background>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                     <GradientStop Color="#141419" Offset="0.0"/>
@@ -1283,6 +1284,26 @@
                                         <TextBlock Text="VENDAS CANCELADAS" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextSubtle}" Margin="0,0,0,8"/>
                                         <TextBlock x:Name="DashCanceledSalesText" Text="0 cupons" FontSize="26" FontWeight="Black" Foreground="{StaticResource Danger}"/>
                                         <TextBlock Text="Estornos efetuados" FontSize="11" Foreground="{StaticResource TextSubtle}" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- Card Lucro Bruto (somente DONO) -->
+                        <Border x:Name="DashProfitCard" Grid.Column="4" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1" CornerRadius="12" Effect="{StaticResource ElevCard}" Visibility="Collapsed">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#141419" Offset="0.0"/>
+                                    <GradientStop Color="#1d1d24" Offset="1.0"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <Grid>
+                                <Border Height="3" Background="#10b981" CornerRadius="12,12,0,0" VerticalAlignment="Top"/>
+                                <Border Padding="15" Margin="0,3,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="LUCRO BRUTO" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextSubtle}" Margin="0,0,0,8"/>
+                                        <TextBlock x:Name="DashProfitText" Text="R$ 0,00" FontSize="26" FontWeight="Black" Foreground="#10b981"/>
+                                        <TextBlock Text="Faturamento − Custo" FontSize="11" Foreground="{StaticResource TextSubtle}" Margin="0,4,0,0"/>
                                     </StackPanel>
                                 </Border>
                             </Grid>

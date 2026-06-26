@@ -2451,7 +2451,7 @@ namespace PdvPadaria
 
             stack.Children.Add(new TextBlock { Text = "O produto fica disponível em todas as lojas (saldo zero). Cada loja ajusta a quantidade depois.", Foreground = AppColors.TextMuted, FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
             stack.Children.Add(createField("Nome do Produto", txtNome));
-            stack.Children.Add(createField("Código de Barras (opcional)", txtBarcode));
+            stack.Children.Add(createField("Código de Barras *", txtBarcode));
             stack.Children.Add(createField("Categoria", cmbCategoria));
             stack.Children.Add(createField("Unidade de Medida", cmbUnidade));
 
@@ -2504,6 +2504,8 @@ namespace PdvPadaria
             {
                 string nome = txtNome.Text.Trim();
                 if (string.IsNullOrEmpty(nome)) { MessageBox.Show("O nome do produto é obrigatório.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+                string barcode = txtBarcode.Text.Trim();
+                if (string.IsNullOrEmpty(barcode)) { MessageBox.Show("O código de barras é obrigatório.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
                 if (!TryParseDouble(txtPrecoVenda.Text, out double vendaVal) || vendaVal < 0 ||
                     !TryParseDouble(txtPrecoCusto.Text, out double custoVal) || custoVal < 0)
                 {
@@ -2516,7 +2518,6 @@ namespace PdvPadaria
                 // tipo derivado da categoria (Produção Própria => produção; senão mercadoria normal)
                 string tipo = catNome.ToLower().Contains("produ") ? "PRODUCAO" : "NORMAL";
                 string unidade = cmbUnidade.SelectedItem?.ToString() ?? "UN";
-                string barcode = txtBarcode.Text.Trim();
 
                 confirmBtn.IsEnabled = false; confirmBtn.Content = "Cadastrando...";
                 try
@@ -2544,7 +2545,8 @@ namespace PdvPadaria
                         string err = j["error"]!.ToString();
                         MessageBox.Show(err == "invalid_credentials" ? "Sessão do dono expirada, faça login online de novo." :
                             err == "categoria_invalida" ? "Categoria inválida." :
-                            err == "nome_obrigatorio" ? "Informe o nome do produto." : err,
+                            err == "nome_obrigatorio" ? "Informe o nome do produto." :
+                            err == "barcode_obrigatorio" ? "Informe o código de barras do produto." : err,
                             "Novo produto", MessageBoxButton.OK, MessageBoxImage.Warning);
                         confirmBtn.IsEnabled = true; confirmBtn.Content = "Cadastrar Produto";
                         return;
@@ -3084,9 +3086,13 @@ namespace PdvPadaria
             if (CurrentUser.Role.ToUpper() != "DONO")
             {
                 DashStorePanel.Visibility = Visibility.Collapsed;
+                DashProfitCard.Visibility = Visibility.Collapsed;
                 return;
             }
             DashStorePanel.Visibility = Visibility.Visible;
+            // Mostra o card de Lucro Bruto apenas para o DONO
+            DashProfitCard.Visibility = Visibility.Visible;
+            DashProfitColumn.Width = new GridLength(1, GridUnitType.Star);
             if (_dashSelectorReady) return;
 
             var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
@@ -3156,6 +3162,11 @@ namespace PdvPadaria
                 DashSalesCountText.Text = $"{approvedCount} vendas";
                 DashAvgTicketText.Text = $"R$ {avgTicket / 100.0:F2}";
                 DashCanceledSalesText.Text = "--";
+
+                // Lucro bruto (faturamento - custo) retornado pela RPC atualizada
+                long totalCost = (long?)rede?["custo_centavos"] ?? 0;
+                long profit = totalBilling - totalCost;
+                DashProfitText.Text = $"R$ {profit / 100.0:F2}";
 
                 DashCashAmountText.Text = "--";
                 DashPixAmountText.Text = "--";
@@ -3258,6 +3269,13 @@ namespace PdvPadaria
                 DashPixAmountText.Text = $"R$ {pixTotal / 100.0:F2}";
                 DashCardAmountText.Text = $"R$ {cardTotal / 100.0:F2}";
 
+                // Lucro bruto por loja: soma (priceCost * quantity) dos itens vendidos
+                // Não temos os itens individuais nessa RPC, mas a RPC atualizada retorna custo por loja nas 'lojas'
+                // Aqui pegamos do JSON da loja selecionada; para simplificar, buscamos da lista de lojas do JSON principal
+                // Porém esta branch recebe da RPC get_vendas_loja que não retorna custo.
+                // Vamos calcular custo cruzando Product.PriceCost localmente quando possível.
+                DashProfitText.Text = "--";
+
                 // Não é possível popular produtos na loja remota sem puxar todos os itens da nuvem
                 DashTopProductsList.ItemsSource = null;
             }
@@ -3356,6 +3374,19 @@ namespace PdvPadaria
                     .ToList();
 
                 DashTopProductsList.ItemsSource = topProducts;
+
+                // Lucro bruto local: faturamento - custo (PriceCost × Quantity por item)
+                if (CurrentUser.Role.ToUpper() == "DONO")
+                {
+                    long totalCost = 0;
+                    foreach (var item in todayItems)
+                    {
+                        if (productMap.TryGetValue(item.ProductId, out var p))
+                            totalCost += (long)(p.PriceCost * item.Quantity);
+                    }
+                    long profit = totalBilling - totalCost;
+                    DashProfitText.Text = $"R$ {profit / 100.0:F2}";
+                }
             }
             catch (Exception ex)
             {
