@@ -130,65 +130,74 @@ namespace PdvPadaria.Views
             // Para histórico remoto, o cancelamento direto não é permitido na filial atual
             BtnCancel.Visibility = Visibility.Collapsed;
 
-            // 1. Busca a Venda na nuvem
-            // Busca a venda usando a sintaxe select do Postgrest
-            string saleUrl = $"{baseUrl}/rest/v1/Sale?id=eq.{_saleId}";
-            using var reqSale = new HttpRequestMessage(HttpMethod.Get, saleUrl);
-            reqSale.Headers.Add("apikey", anon);
-            reqSale.Headers.Add("Authorization", $"Bearer {anon}");
-
-            var respSale = await _httpClient.SendAsync(reqSale);
-            if (!respSale.IsSuccessStatusCode)
+            // Busca a Venda de forma consolidada e segura através da RPC get_venda_detalhe
+            var payload = new
             {
-                MessageBox.Show($"Erro ao carregar dados da venda na nuvem ({(int)respSale.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                p_email = _donoEmail,
+                p_password = _donoPassword,
+                p_sale_id = _saleId
+            };
+            var content = new StringContent(
+                JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+
+            using var req = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_venda_detalhe");
+            req.Content = content;
+            req.Headers.Add("apikey", anon);
+            req.Headers.Add("Authorization", $"Bearer {anon}");
+
+            var resp = await _httpClient.SendAsync(req);
+            if (!resp.IsSuccessStatusCode)
+            {
+                MessageBox.Show($"Erro ao carregar dados da venda na nuvem ({(int)resp.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
                 Close();
                 return;
             }
 
-            string bodySale = await respSale.Content.ReadAsStringAsync();
-            var sales = JsonConvert.DeserializeObject<List<RemoteSale>>(bodySale);
-            var sale = sales?.FirstOrDefault();
-            if (sale == null)
+            string body = await resp.Content.ReadAsStringAsync();
+            var result = JsonConvert.DeserializeObject<RemoteVendaDetalheResult>(body);
+            if (result == null || !string.IsNullOrEmpty(result.Error))
             {
-                MessageBox.Show("Venda remota não encontrada.", "Erro", MessageBoxButton.OK, MessageBoxImage.Warning);
+                string err = result?.Error ?? "Venda remota não encontrada.";
+                MessageBox.Show(err == "invalid_credentials" ? "Sessão do dono expirada, faça login online de novo." :
+                    err == "forbidden" ? "Sem permissão para visualizar vendas." : err,
+                    "Venda remota", MessageBoxButton.OK, MessageBoxImage.Warning);
                 Close();
                 return;
             }
 
-            TxtSaleId.Text = $"ID: {sale.Id}";
-            TxtDate.Text = sale.SaleDate.ToString("dd/MM/yyyy HH:mm");
-            TxtPaymentMethod.Text = sale.PaymentMethod;
-            TxtTotal.Text = $"R$ {sale.Total / 100.0:F2}";
+            TxtSaleId.Text = $"ID: {result.Id}";
+            if (DateTime.TryParse(result.Data, out DateTime dateVal))
+            {
+                TxtDate.Text = dateVal.ToString("dd/MM/yyyy HH:mm");
+            }
+            else
+            {
+                TxtDate.Text = result.Data;
+            }
+            TxtPaymentMethod.Text = result.Metodo;
+            TxtTotal.Text = $"R$ {result.TotalCentavos / 100.0:F2}";
 
-            bool isCanceled = sale.PaymentStatus == "CANCELADO";
-            TxtStatus.Text = sale.PaymentStatus;
+            bool isCanceled = result.Status == "CANCELADO";
+            TxtStatus.Text = result.Status;
             BorderStatus.Background = isCanceled ? AppColors.DangerBadge : AppColors.SuccessBadge;
             TxtStatus.Foreground = isCanceled ? AppColors.Danger : AppColors.Success;
 
-            // 2. Busca itens da venda associando produtos no Supabase (Join via select)
-            string itemsUrl = $"{baseUrl}/rest/v1/SaleItem?saleId=eq.{_saleId}&select=*,product(name,unitMeasure)";
-            using var reqItems = new HttpRequestMessage(HttpMethod.Get, itemsUrl);
-            reqItems.Headers.Add("apikey", anon);
-            reqItems.Headers.Add("Authorization", $"Bearer {anon}");
-
-            var respItems = await _httpClient.SendAsync(reqItems);
-            if (!respItems.IsSuccessStatusCode)
+            // Preenche os itens na tela
+            var views = new List<SaleDetailItemView>();
+            if (result.Itens != null)
             {
-                MessageBox.Show($"Erro ao carregar itens da venda na nuvem ({(int)respItems.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
+                foreach (var item in result.Itens)
+                {
+                    views.Add(new SaleDetailItemView
+                    {
+                        ProductName = item.Nome,
+                        UnitMeasure = item.Unidade,
+                        Quantity = item.Quantidade,
+                        PriceUnit = item.PrecoUnitCentavos,
+                        Subtotal = item.SubtotalCentavos
+                    });
+                }
             }
-
-            string bodyItems = await respItems.Content.ReadAsStringAsync();
-            var items = JsonConvert.DeserializeObject<List<RemoteSaleItem>>(bodyItems);
-
-            var views = items?.Select(item => new SaleDetailItemView
-            {
-                ProductName = item.Product?.Name ?? "Produto Desconhecido",
-                UnitMeasure = item.Product?.UnitMeasure ?? "UN",
-                Quantity = item.Quantity,
-                PriceUnit = item.PriceUnit,
-                Subtotal = item.Subtotal
-            }).ToList() ?? new List<SaleDetailItemView>();
 
             ItemsList.ItemsSource = views;
         }
@@ -300,6 +309,50 @@ namespace PdvPadaria.Views
         {
             public string Name { get; set; } = string.Empty;
             public string UnitMeasure { get; set; } = "UN";
+        }
+
+        public class RemoteVendaDetalheResult
+        {
+            [JsonProperty("id")]
+            public string Id { get; set; } = string.Empty;
+            [JsonProperty("data")]
+            public string Data { get; set; } = string.Empty;
+            [JsonProperty("loja")]
+            public string Loja { get; set; } = string.Empty;
+            [JsonProperty("metodo")]
+            public string Metodo { get; set; } = string.Empty;
+            [JsonProperty("status")]
+            public string Status { get; set; } = string.Empty;
+            [JsonProperty("subtotal_centavos")]
+            public int SubtotalCentavos { get; set; }
+            [JsonProperty("desconto_centavos")]
+            public int DescontoCentavos { get; set; }
+            [JsonProperty("total_centavos")]
+            public int TotalCentavos { get; set; }
+            [JsonProperty("recebido_centavos")]
+            public int? RecebidoCentavos { get; set; }
+            [JsonProperty("troco_centavos")]
+            public int? TrocoCentavos { get; set; }
+            [JsonProperty("error")]
+            public string? Error { get; set; }
+            [JsonProperty("itens")]
+            public List<RemoteVendaDetalheItem>? Itens { get; set; }
+        }
+
+        public class RemoteVendaDetalheItem
+        {
+            [JsonProperty("nome")]
+            public string Nome { get; set; } = string.Empty;
+            [JsonProperty("tipo")]
+            public string Tipo { get; set; } = string.Empty;
+            [JsonProperty("unidade")]
+            public string Unidade { get; set; } = "UN";
+            [JsonProperty("quantidade")]
+            public double Quantidade { get; set; }
+            [JsonProperty("preco_unit_centavos")]
+            public int PrecoUnitCentavos { get; set; }
+            [JsonProperty("subtotal_centavos")]
+            public int SubtotalCentavos { get; set; }
         }
     }
 }
