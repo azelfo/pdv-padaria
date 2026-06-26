@@ -10,9 +10,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using QRCoder;
 using PdvPadaria.Models;
 using PdvPadaria.Services;
 using PdvPadaria.Views;
@@ -145,10 +143,7 @@ namespace PdvPadaria
             SafeShowHideTaskbar(true);
         }
 
-        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
-        {
-            base.OnClosing(e);
-        }
+
 
         // ViewModel auxiliar para renderizar a linha do carrinho de compras
         public class CartItemView
@@ -272,7 +267,7 @@ namespace PdvPadaria
         }
 
         // Navegação Lateral
-        private void SidebarBtn_Click(object sender, RoutedEventArgs e)
+        private async void SidebarBtn_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button btn && btn.Tag is string indexStr && int.TryParse(indexStr, out int index))
             {
@@ -307,7 +302,10 @@ namespace PdvPadaria
                 }
                 else if (index == 2)
                 {
-                    _ = SetupHistoryStoreSelector();
+                    // Aguarda o seletor popular ANTES de decidir local vs remoto. Sem o await, o
+                    // setup async ainda não definiu _historyRemoteStoreId e o histórico carregava
+                    // as vendas locais enquanto o dropdown já mostrava a 1ª loja (filtro fantasma).
+                    await SetupHistoryStoreSelector();
                     if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
                     else _ = LoadRemoteHistory(_historyRemoteStoreId);
                 }
@@ -2169,6 +2167,9 @@ namespace PdvPadaria
             var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
             FillStoreSelector(HistoryStoreSelector, lojas);
             _historySelectorReady = true;
+            // Alinha o estado à 1ª loja que o dropdown passou a exibir, para o histórico do dono
+            // já abrir mostrando as vendas DAQUELA loja (via nuvem), e não o histórico local.
+            _historyRemoteStoreId = (HistoryStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
         }
 
         private void HistoryStoreSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
