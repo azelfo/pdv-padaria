@@ -4,7 +4,7 @@
 [Setup]
 AppId={{C6F2A3F4-5987-45CC-AB1B-7AA8D4D4A994}
 AppName=PDV - Padaria Venâncio
-AppVersion=1.0.0
+AppVersion=1.0.1
 AppPublisher=Padaria Venâncio
 AppPublisherURL=https://www.padariavenancio.com.br
 DefaultDirName={autopf}\PDV Padaria Venancio
