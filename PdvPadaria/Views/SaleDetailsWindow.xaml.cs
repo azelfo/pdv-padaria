@@ -95,7 +95,10 @@ namespace PdvPadaria.Views
             // Busca itens da venda
             var items = await connection.Table<SaleItem>().Where(i => i.SaleId == _saleId).ToListAsync();
             var products = await connection.Table<Product>().ToListAsync();
-            var productMap = products.ToDictionary(p => p.Id);
+            var productMap = products
+                .Where(p => p.Id != null)
+                .GroupBy(p => p.Id)
+                .ToDictionary(g => g.Key, g => g.First());
 
             var views = items.Select(item =>
             {

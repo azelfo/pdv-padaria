@@ -2830,6 +2830,13 @@ namespace PdvPadaria
         private async void DeleteProductButton_Click(object sender, RoutedEventArgs e)
         {
             if (StockRemoteBlocked()) return;
+            if (string.IsNullOrEmpty(_donoEmail) || string.IsNullOrEmpty(_donoPassword))
+            {
+                MessageBox.Show("Para excluir/inativar um produto na rede, faça login ONLINE como dono.",
+                    "Excluir produto", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             if (sender is Button btn && btn.Tag is string productId)
             {
                 try
@@ -2846,6 +2853,45 @@ namespace PdvPadaria
 
                     if (MessageBox.Show($"Deseja realmente excluir/inativar o produto '{product.Name}'? Ele não estará mais disponível para venda.", "Confirmação de Exclusão", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
                     {
+                        string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                        string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                        if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
+                        {
+                            MessageBox.Show("Configuração da nuvem ausente no .env.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                            return;
+                        }
+
+                        // 1. Inativa o produto na nuvem Supabase via RPC excluir_produto
+                        var payload = new
+                        {
+                            p_email = _donoEmail,
+                            p_password = _donoPassword,
+                            p_product_id = productId
+                        };
+                        using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/excluir_produto");
+                        req.Content = new System.Net.Http.StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                        req.Headers.Add("apikey", anon);
+                        req.Headers.Add("Authorization", "Bearer " + anon);
+
+                        var resp = await _redeHttp.SendAsync(req);
+                        if (!resp.IsSuccessStatusCode)
+                        {
+                            MessageBox.Show($"Sem conexão com a nuvem para excluir o produto ({(int)resp.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                            return;
+                        }
+
+                        var j = Newtonsoft.Json.Linq.JObject.Parse(await resp.Content.ReadAsStringAsync());
+                        if (j["error"] != null)
+                        {
+                            string err = j["error"]!.ToString();
+                            MessageBox.Show(err == "invalid_credentials" ? "Sessão do dono expirada, faça login online de novo." :
+                                err == "forbidden" ? "Sem permissão para inativar produtos." :
+                                err == "not_found" ? "Produto não encontrado na nuvem." : err,
+                                "Excluir produto", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            return;
+                        }
+
+                        // 2. Se inativou com sucesso na nuvem, aplica localmente no SQLite
                         product.Active = false;
                         product.UpdatedAt = DateTime.Now;
 
