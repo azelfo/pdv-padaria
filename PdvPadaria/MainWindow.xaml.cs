@@ -875,7 +875,11 @@ namespace PdvPadaria
                             return;
                         }
 
-                        if (item.Quantity + 1 > product.LocalStockQuantity)
+                        // Soma TODAS as linhas do mesmo produto no carrinho (não só a clicada),
+                        // consistente com a validação do AddProductToCart — evita passar do
+                        // estoque real quando o produto aparece em mais de uma linha.
+                        double totalNoCarrinho = _cartItems.Where(i => i.ProductId == item.ProductId).Sum(i => i.Quantity);
+                        if (totalNoCarrinho + 1 > product.LocalStockQuantity)
                         {
                             MessageBox.Show($"Estoque insuficiente! Atual: {product.LocalStockQuantity:F0}", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                             return;

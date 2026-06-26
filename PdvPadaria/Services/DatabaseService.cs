@@ -25,9 +25,12 @@ namespace PdvPadaria.Services
             }
 
             DbPath = Path.Combine(appDataFolder, "dev.db");
-            
-            // Inicializa a conexão assíncrona do SQLite com suporte a transações multi-thread
-            _database = new SQLiteAsyncConnection(DbPath, SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create | SQLiteOpenFlags.SharedCache);
+
+            // Conexão assíncrona principal (vendas). SEM SharedCache de propósito: com WAL,
+            // conexões separadas já leem/escrevem concorrentemente. SharedCache transforma o
+            // lock em SQLITE_LOCKED (nível de tabela), que o BusyTimeout NÃO aguarda — fonte
+            // de erro intermitente "database is locked" se uma venda coincidir com o sync.
+            _database = new SQLiteAsyncConnection(DbPath, SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create);
         }
 
         // Executa a inicialização das tabelas de forma assíncrona
@@ -153,7 +156,9 @@ namespace PdvPadaria.Services
         // Getter para a conexão síncrona usada no serviço de sincronização
         public SQLiteConnection GetSyncConnection()
         {
-            var conn = new SQLiteConnection(DbPath, SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create | SQLiteOpenFlags.SharedCache);
+            // Conexão de sincronização. Também SEM SharedCache (ver comentário no construtor):
+            // WAL + BusyTimeout dá a concorrência segura entre esta conexão e a de vendas.
+            var conn = new SQLiteConnection(DbPath, SQLiteOpenFlags.ReadWrite | SQLiteOpenFlags.Create);
             conn.BusyTimeout = TimeSpan.FromSeconds(5);
             return conn;
         }
