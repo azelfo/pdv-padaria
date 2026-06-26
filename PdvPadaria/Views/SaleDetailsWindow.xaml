@@ -1,0 +1,131 @@
+<Window x:Class="PdvPadaria.Views.SaleDetailsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Detalhes da Venda - Padaria Venâncio" 
+        Width="520" Height="580"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        BorderThickness="0"
+        ShowInTaskbar="False">
+
+    <Border Background="{StaticResource BgBase}" CornerRadius="16" BorderThickness="1.5" BorderBrush="{StaticResource BorderSoft}">
+        <Grid Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/> <!-- Cabeçalho -->
+                <RowDefinition Height="Auto"/> <!-- Status / Metadados -->
+                <RowDefinition Height="*"/>    <!-- Lista de Itens -->
+                <RowDefinition Height="Auto"/> <!-- Resumo Geral -->
+                <RowDefinition Height="Auto"/> <!-- Rodapé / Botões -->
+            </Grid.RowDefinitions>
+
+            <!-- Cabeçalho -->
+            <Grid Grid.Row="0" Margin="0,0,0,15">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="DETALHES DA VENDA" FontSize="18" FontWeight="Black" Foreground="{StaticResource PremiumTextGradient}"/>
+                    <TextBlock x:Name="TxtSaleId" Text="ID: ..." FontSize="11" Foreground="{StaticResource TextSubtle}"/>
+                </StackPanel>
+                <Button Grid.Column="1" Content="✕" Width="30" Height="30" FontSize="16" FontWeight="Bold"
+                        Background="Transparent" Foreground="{StaticResource TextSubtle}" BorderThickness="0" Cursor="Hand" Click="CloseButton_Click"/>
+            </Grid>
+
+            <!-- Status / Metadados -->
+            <Border Grid.Row="1" Background="{StaticResource Surface}" CornerRadius="10" Padding="12" Margin="0,0,0,15" BorderThickness="1" BorderBrush="{StaticResource BorderSoft}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.5*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel>
+                        <TextBlock Text="DATA DA VENDA" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextSubtle}"/>
+                        <TextBlock x:Name="TxtDate" Text="--/--/---- --:--" FontSize="13" Foreground="#f8fafc" FontWeight="SemiBold" Margin="0,3,0,0"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1">
+                        <TextBlock Text="PAGAMENTO" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextSubtle}"/>
+                        <TextBlock x:Name="TxtPaymentMethod" Text="--" FontSize="13" Foreground="#94a3b8" FontWeight="SemiBold" Margin="0,3,0,0"/>
+                    </StackPanel>
+
+                    <Border Grid.Column="2" x:Name="BorderStatus" CornerRadius="6" Padding="10,5" VerticalAlignment="Center" HorizontalAlignment="Right">
+                        <TextBlock x:Name="TxtStatus" Text="APROVADO" FontSize="11" FontWeight="Bold" Foreground="#10b981"/>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- Lista de Itens -->
+            <Grid Grid.Row="2" Margin="0,0,0,15">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="25"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Grid Margin="10,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="1*"/>
+                        <ColumnDefinition Width="1*"/>
+                        <ColumnDefinition Width="1.2*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="PRODUTO" Style="{StaticResource TextHeader}"/>
+                    <TextBlock Grid.Column="1" Text="QTD" Style="{StaticResource TextHeader}" HorizontalAlignment="Right"/>
+                    <TextBlock Grid.Column="2" Text="PREÇO UNIT." Style="{StaticResource TextHeader}" HorizontalAlignment="Right"/>
+                    <TextBlock Grid.Column="3" Text="SUBTOTAL" Style="{StaticResource TextHeader}" HorizontalAlignment="Right"/>
+                </Grid>
+
+                <ListView x:Name="ItemsList" Grid.Row="1" Background="Transparent" BorderThickness="0" Margin="0,5,0,0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*"/>
+                                    <ColumnDefinition Width="1*"/>
+                                    <ColumnDefinition Width="1*"/>
+                                    <ColumnDefinition Width="1.2*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Text="{Binding ProductName}" Foreground="#f8fafc" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Grid.Column="1" Text="{Binding QuantityString}" Foreground="#fcd34d" FontSize="13" FontWeight="Bold" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="{Binding PriceUnitString}" Foreground="#94a3b8" FontSize="13" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="3" Text="{Binding SubtotalString}" Foreground="#f59e0b" FontSize="14" FontWeight="Bold" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+
+            <!-- Resumo Geral -->
+            <Border Grid.Row="3" Background="{StaticResource Surface}" CornerRadius="10" Padding="15" Margin="0,0,0,20" BorderThickness="1" BorderBrush="{StaticResource BorderSoft}">
+                <Grid>
+                    <TextBlock Text="VALOR TOTAL RECEBIDO" VerticalAlignment="Center" FontSize="12" FontWeight="Bold" Foreground="{StaticResource TextSubtle}"/>
+                    <TextBlock x:Name="TxtTotal" Text="R$ 0,00" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="22" FontWeight="Black" Foreground="{StaticResource Accent}"/>
+                </Grid>
+            </Border>
+
+            <!-- Rodapé / Botões -->
+            <Grid Grid.Row="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Content="Voltar para a Lista" Style="{StaticResource ShortcutButton}" Click="CloseButton_Click" Height="40" Padding="20,0"/>
+
+                <Button Grid.Column="1" x:Name="BtnCancel" Content="Cancelar Venda" Padding="20,0" Height="40" FontSize="12" FontWeight="Bold"
+                        Background="#26ef4444" Foreground="#ef4444" BorderThickness="1" BorderBrush="#ef4444" Cursor="Hand" Click="CancelButton_Click" Margin="15,0,0,0">
+                    <Button.Resources>
+                        <Style TargetType="Border">
+                            <CornerRadius Value="8"/>
+                        </Style>
+                    </Button.Resources>
+                </Button>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

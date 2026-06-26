@@ -200,15 +200,5 @@ namespace PdvPadaria.Views
             }
         }
 
-        // Atalhos de Login Rápido para Debug/Homologação
-        private void TestLoginShortcut_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button button && button.Tag is string email)
-            {
-                EmailInput.Text = email;
-                PasswordInput.Password = "123";
-                LoginButton_Click(LoginButton, new RoutedEventArgs());
-            }
-        }
     }
 }

@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="PADARIA PREMIUM - PDV &amp; Gestão" Height="800" Width="1350"
+        Title="PDV - Padaria Venâncio" Icon="pack://application:,,,/Resources/app.ico" Height="800" Width="1350"
         MinHeight="768" MinWidth="1100"
         WindowStartupLocation="CenterScreen"
         Background="#060608"
@@ -469,14 +469,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- Logo / Marca -->
-                <StackPanel Orientation="Horizontal" Margin="5,0,0,30">
-                    <Path Width="24" Height="24" Fill="#f59e0b" Margin="0,0,10,0" VerticalAlignment="Center"
-                          Data="M12,2L2,7L12,12L22,7L12,2M2,17L12,22L22,17M2,12L12,17L22,12"/>
-                    <StackPanel>
-                        <TextBlock Text="PADARIA" FontSize="16" FontWeight="Black" Foreground="#f8fafc"/>
-                        <TextBlock Text="PREMIUM GESTÃO" FontSize="9" FontWeight="Bold" Foreground="{StaticResource TextSubtle}" Margin="0,1,0,0"/>
-                    </StackPanel>
-                </StackPanel>
+                <Image Source="pack://application:,,,/Resources/logo.png" Stretch="Uniform" Height="75" HorizontalAlignment="Center" Margin="0,5,0,30" RenderOptions.BitmapScalingMode="HighQuality"/>
 
                 <!-- Botões de Menu Lateral -->
                 <StackPanel Grid.Row="1">
@@ -852,7 +845,6 @@
                                     </Button.Background>
                                 </Button>
 
-                                <!-- Totalizador Gigante (Sempre Visível) -->
                                 <Border Grid.Row="1" Background="{StaticResource Surface}" CornerRadius="12" BorderThickness="1" BorderBrush="{StaticResource BorderSoft}" Padding="20" Margin="0,0,0,15" Effect="{StaticResource ElevCard}">
                                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                                         <TextBlock Text="TOTAL A PAGAR" Foreground="{StaticResource TextSubtle}" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center"/>
@@ -860,142 +852,12 @@
                                     </StackPanel>
                                 </Border>
 
-                                <!-- Área Dinâmica de Ações (Fim de Venda ou Abas de Pagamento) -->
+                                <!-- Área Dinâmica de Ações (Fim de Venda) -->
                                 <Grid Grid.Row="2">
                                     <!-- Ação 1: Confirmar Venda (Modo Venda Ativa) -->
                                     <StackPanel x:Name="PanelPrecoVenda" Visibility="Visible">
                                         <Button x:Name="ConfirmSaleBtn" Content="CONFIRMAR VENDA (F12)" Style="{StaticResource FinishButton}" Click="ConfirmSaleBtn_Click"/>
                                     </StackPanel>
-
-                                    <!-- Ação 2: Abas de Pagamento (Modo Pagamento) -->
-                                    <TabControl x:Name="PaymentTabControl" Visibility="Collapsed" Background="Transparent" BorderThickness="0" SelectionChanged="PaymentTabControl_SelectionChanged">
-                                        <TabControl.Resources>
-                                            <Style TargetType="TabItem">
-                                                <Setter Property="HeaderTemplate">
-                                                    <Setter.Value>
-                                                        <DataTemplate>
-                                                            <ContentPresenter Content="{TemplateBinding Content}"/>
-                                                        </DataTemplate>
-                                                    </Setter.Value>
-                                                </Setter>
-                                                <Setter Property="Background" Value="#141419"/>
-                                                <Setter Property="Foreground" Value="#94a3b8"/>
-                                                <Setter Property="BorderBrush" Value="#26262e"/>
-                                                <Setter Property="BorderThickness" Value="1"/>
-                                                <Setter Property="Margin" Value="0,0,3,0"/>
-                                                <Setter Property="Padding" Value="10,8"/>
-                                                <Setter Property="Cursor" Value="Hand"/>
-                                                <Setter Property="Template">
-                                                    <Setter.Value>
-                                                        <ControlTemplate TargetType="TabItem">
-                                                            <Border x:Name="Border" 
-                                                                    CornerRadius="8,8,0,0" 
-                                                                    Background="{TemplateBinding Background}" 
-                                                                    BorderBrush="{TemplateBinding BorderBrush}" 
-                                                                    BorderThickness="{TemplateBinding BorderThickness}" 
-                                                                    Padding="{TemplateBinding Padding}">
-                                                                <ContentPresenter x:Name="ContentSite"
-                                                                                  ContentSource="Header"
-                                                                                  HorizontalAlignment="Center"
-                                                                                  VerticalAlignment="Center"/>
-                                                            </Border>
-                                                            <ControlTemplate.Triggers>
-                                                                <Trigger Property="IsSelected" Value="True">
-                                                                    <Setter Property="Background" Value="#1c1c23"/>
-                                                                    <Setter Property="Foreground" Value="#f59e0b"/>
-                                                                    <Setter Property="BorderBrush" Value="#f59e0b"/>
-                                                                    <Setter TargetName="Border" Property="BorderThickness" Value="1,1,1,0"/>
-                                                                </Trigger>
-                                                                <Trigger Property="IsMouseOver" Value="True">
-                                                                    <Setter TargetName="Border" Property="BorderBrush" Value="#f59e0b"/>
-                                                                </Trigger>
-                                                            </ControlTemplate.Triggers>
-                                                        </ControlTemplate>
-                                                    </Setter.Value>
-                                                </Setter>
-                                            </Style>
-                                        </TabControl.Resources>
-
-                                        <!-- Aba Dinheiro -->
-                                        <TabItem Header="💵 Dinheiro (F5)">
-                                            <Border Background="#1c1c23" CornerRadius="0,8,8,8" BorderThickness="1" BorderBrush="#26262e" Padding="15">
-                                                <StackPanel>
-                                                    <TextBlock Text="VALOR RECEBIDO (R$)" Foreground="#94a3b8" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
-                                                    <Grid Margin="0,0,0,12">
-                                                        <TextBox x:Name="CashReceivedInput" Style="{StaticResource RoundedInputBox}" TextChanged="CashReceivedInput_TextChanged"/>
-                                                        <TextBlock x:Name="ChangeText" Text="R$ 0,00" Foreground="#10b981" FontSize="24" FontWeight="Black" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                                                    </Grid>
-
-                                                    <Button x:Name="FinishSaleButton" Content="FINALIZAR VENDA (Enter)" Style="{StaticResource FinishButton}" Click="FinishSaleButton_Click"/>
-                                                    <Button Content="VOLTAR PARA VENDA (Esc)" Margin="0,10,0,0" Style="{StaticResource ShortcutButton}" BorderBrush="#ef4444" Click="CancelPaymentSelection_Click"/>
-                                                </StackPanel>
-                                            </Border>
-                                        </TabItem>
-
-                                        <!-- Aba PIX -->
-                                        <TabItem Header="📱 PIX (F6)">
-                                            <Border Background="#1c1c23" CornerRadius="0,8,8,8" BorderThickness="1" BorderBrush="#26262e" Padding="15">
-                                                <Grid>
-                                                    <!-- Estado 1: Carregamento do PIX Dinâmico -->
-                                                    <StackPanel x:Name="PanelPixLoading" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,20">
-                                                        <TextBlock Text="🔄 Conectando à InfinitePay..." Foreground="#f59e0b" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,10"/>
-                                                        <TextBlock Text="Por favor, aguarde enquanto geramos a cobrança via API..." Foreground="#94a3b8" FontSize="12" HorizontalAlignment="Center" TextAlignment="Center"/>
-                                                    </StackPanel>
-
-                                                    <!-- Estado 2: QR Code e Detalhes de Pagamento -->
-                                                    <StackPanel x:Name="PanelPixMain" Visibility="Visible">
-                                                        <!-- Status de Conexão Online -->
-                                                        <Border x:Name="BorderPixOnlineStatus" Background="#1a10b981" BorderBrush="#10b981" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,12" Visibility="Visible">
-                                                            <StackPanel>
-                                                                <TextBlock Text="⚡ CONEXÃO DIRETA INFINITEPAY" Foreground="#34d399" FontSize="13" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,4"/>
-                                                                <TextBlock Text="Aguardando confirmação automática de pagamento..." Foreground="#a7f3d0" FontSize="11" HorizontalAlignment="Center" TextAlignment="Center"/>
-                                                            </StackPanel>
-                                                        </Border>
-
-                                                        <!-- QR Code Container -->
-                                                        <Border Background="#ffffff" Width="200" Height="200" CornerRadius="8" Padding="10" HorizontalAlignment="Center" Margin="0,0,0,8">
-                                                            <Image x:Name="PixQrCodeImage" Width="180" Height="180" Stretch="Uniform" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
-                                                        </Border>
-
-                                                        <!-- Instrução de Leitura -->
-                                                        <TextBlock x:Name="TxtPixInstrucao" Text="Aponte o app do banco para pagar o QR Code do PIX." Foreground="#f59e0b" FontSize="11" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,12" TextAlignment="Center" TextWrapping="Wrap"/>
-
-                                                        <!-- Copia e Cola -->
-                                                        <TextBlock Text="Código Copia e Cola Pix:" Foreground="#94a3b8" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                                                        <Grid Margin="0,0,0,15">
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="*"/>
-                                                                <ColumnDefinition Width="Auto"/>
-                                                            </Grid.ColumnDefinitions>
-                                                            <TextBox x:Name="PixCopiaColaTextBox" Style="{StaticResource RoundedInputBox}" IsReadOnly="True" FontSize="12" Padding="8" Background="#0f0f13"/>
-                                                            <Button x:Name="CopyPixCodeBtn" Grid.Column="1" Content="Copiar" Width="70" Margin="5,0,0,0" Style="{StaticResource ShortcutButton}" Click="CopyPixCodeBtn_Click"/>
-                                                        </Grid>
-
-                                                        <!-- Ações -->
-                                                        <Button x:Name="FinishSaleButtonPix" Content="CONFIRMAR PAGAMENTO MANUAL (Enter)" Style="{StaticResource FinishButton}" Click="FinishSaleButton_Click"/>
-                                                        <Button Content="VOLTAR PARA VENDA (Esc)" Margin="0,8,0,0" Style="{StaticResource ShortcutButton}" BorderBrush="#ef4444" Click="CancelPaymentSelection_Click"/>
-                                                    </StackPanel>
-                                                </Grid>
-                                            </Border>
-                                        </TabItem>
-
-                                        <!-- Aba Cartão -->
-                                        <TabItem Header="💳 Cartão (F7)">
-                                            <Border Background="#1c1c23" CornerRadius="0,8,8,8" BorderThickness="1" BorderBrush="#26262e" Padding="15">
-                                                <StackPanel>
-                                                    <Border Background="#2660A5FA" CornerRadius="8" Padding="15" Margin="0,0,0,15">
-                                                        <StackPanel HorizontalAlignment="Center">
-                                                            <TextBlock Text="💳 PAGAMENTO VIA CARTÃO" Foreground="#60a5fa" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,5"/>
-                                                            <TextBlock Text="Aproxime ou insira o cartão..." Foreground="#ffffff" FontSize="12" HorizontalAlignment="Center" TextAlignment="Center"/>
-                                                        </StackPanel>
-                                                    </Border>
-
-                                                    <Button x:Name="FinishSaleButtonCard" Content="CONFIRMAR E FINALIZAR (Enter)" Style="{StaticResource FinishButton}" Click="FinishSaleButton_Click"/>
-                                                    <Button Content="VOLTAR PARA VENDA (Esc)" Margin="0,10,0,0" Style="{StaticResource ShortcutButton}" BorderBrush="#ef4444" Click="CancelPaymentSelection_Click"/>
-                                                </StackPanel>
-                                            </Border>
-                                        </TabItem>
-                                    </TabControl>
                                 </Grid>
                             </Grid>
                         </Grid>
@@ -1008,12 +870,11 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <!-- Filtros e Barra superior -->
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
-                        <!-- Lista de Itens -->
                     </Grid.RowDefinitions>
 
-                    <Grid Margin="0,0,0,15">
+                    <Grid Grid.Row="0" Margin="0,0,0,15">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
@@ -1036,8 +897,15 @@
                         </StackPanel>
                     </Grid>
 
+                    <!-- Filtros secundários: Comercial vs Produção Própria -->
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,15">
+                        <Button x:Name="BtnFilterStockAll" Content="Todos os Produtos" Click="BtnFilterStockAll_Click" Style="{StaticResource ShortcutButton}" Width="160" Height="38" Padding="12,4" Margin="0,0,10,0" Background="{StaticResource Accent}" Foreground="{StaticResource BgBase}"/>
+                        <Button x:Name="BtnFilterStockCommercial" Content="Produtos Comerciais" Click="BtnFilterStockCommercial_Click" Style="{StaticResource ShortcutButton}" Width="160" Height="38" Padding="12,4" Margin="0,0,10,0"/>
+                        <Button x:Name="BtnFilterStockProduction" Content="Produção Própria" Click="BtnFilterStockProduction_Click" Style="{StaticResource ShortcutButton}" Width="160" Height="38" Padding="12,4"/>
+                    </StackPanel>
+
                     <!-- Lista de Produtos e Estoques -->
-                    <Border Grid.Row="1" Background="{StaticResource Surface}" CornerRadius="12" BorderThickness="1" BorderBrush="{StaticResource BorderSoft}" Padding="15" Effect="{StaticResource ElevCard}">
+                    <Border Grid.Row="2" Background="{StaticResource Surface}" CornerRadius="12" BorderThickness="1" BorderBrush="{StaticResource BorderSoft}" Padding="15" Effect="{StaticResource ElevCard}">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="30"/>
@@ -1231,9 +1099,8 @@
                                     <ColumnDefinition Width="1.5*"/>
                                     <ColumnDefinition Width="1.2*"/>
                                     <ColumnDefinition Width="1*"/>
-                                    <ColumnDefinition Width="1.1*"/>
-                                    <ColumnDefinition Width="1*"/>
-                                    <ColumnDefinition Width="1.5*"/>
+                                    <ColumnDefinition Width="1.2*"/>
+                                    <ColumnDefinition Width="1.2*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="DATA E HORA" Style="{StaticResource TextHeader}"/>
                                 <TextBlock Grid.Column="1" Text="ID DA VENDA (CURTO)" Style="{StaticResource TextHeader}"/>
@@ -1241,10 +1108,9 @@
                                 <TextBlock Grid.Column="3" Text="QTD ITENS" Style="{StaticResource TextHeader}" HorizontalAlignment="Right"/>
                                 <TextBlock Grid.Column="4" Text="VALOR TOTAL" Style="{StaticResource TextHeader}" HorizontalAlignment="Right"/>
                                 <TextBlock Grid.Column="5" Text="STATUS" Style="{StaticResource TextHeader}" HorizontalAlignment="Center"/>
-                                <TextBlock Grid.Column="6" Text="AÇÃO" Style="{StaticResource TextHeader}" HorizontalAlignment="Center"/>
                             </Grid>
 
-                            <ListView x:Name="SalesHistoryList" Grid.Row="1" Background="Transparent" BorderThickness="0" Margin="0,10,0,0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListView x:Name="SalesHistoryList" Grid.Row="1" Background="Transparent" BorderThickness="0" Margin="0,10,0,0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="SalesHistoryList_SelectionChanged">
                                 <ListView.ItemTemplate>
                                     <DataTemplate>
                                         <Grid Margin="0,10">
@@ -1253,9 +1119,8 @@
                                                 <ColumnDefinition Width="1.5*"/>
                                                 <ColumnDefinition Width="1.2*"/>
                                                 <ColumnDefinition Width="1*"/>
-                                                <ColumnDefinition Width="1.1*"/>
-                                                <ColumnDefinition Width="1*"/>
-                                                <ColumnDefinition Width="1.5*"/>
+                                                <ColumnDefinition Width="1.2*"/>
+                                                <ColumnDefinition Width="1.2*"/>
                                             </Grid.ColumnDefinitions>
 
                                             <!-- Data -->
@@ -1298,27 +1163,6 @@
                                                     </TextBlock.Style>
                                                 </TextBlock>
                                             </Border>
-
-                                            <!-- Botão de Cancelar -->
-                                            <Button Grid.Column="6" Content="Cancelar Venda" Padding="8,4" FontSize="11" FontWeight="Bold"
-                                                    Background="#26ef4444" Foreground="#ef4444" BorderThickness="0" Cursor="Hand"
-                                                    Click="CancelSaleButton_Click" Tag="{Binding Id}" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                <Button.Resources>
-                                                    <Style TargetType="Border">
-                                                        <Setter Property="CornerRadius" Value="4"/>
-                                                    </Style>
-                                                </Button.Resources>
-                                                <Button.Style>
-                                                    <Style TargetType="Button">
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsCanceled}" Value="True">
-                                                                <Setter Property="IsEnabled" Value="False"/>
-                                                                <Setter Property="Opacity" Value="0.3"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Button.Style>
-                                            </Button>
                                         </Grid>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
@@ -1382,6 +1226,12 @@
                                         <ComboBoxItem Content="PIX" Tag="PIX"/>
                                         <ComboBoxItem Content="Cartão" Tag="CARTAO_CREDITO"/>
                                     </ComboBox>
+                                </StackPanel>
+
+                                <!-- Loja (Somente DONO) -->
+                                <StackPanel x:Name="DashStorePanel" Orientation="Horizontal" Margin="0,5,15,5" Visibility="Collapsed">
+                                    <TextBlock Text="Loja:" Foreground="#94a3b8" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12" FontWeight="SemiBold"/>
+                                    <ComboBox x:Name="DashStoreSelector" Style="{StaticResource PremiumComboBox}" Width="140" Height="32" SelectedIndex="0"/>
                                 </StackPanel>
 
                                 <!-- Botão Aplicar -->

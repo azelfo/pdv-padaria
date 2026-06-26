@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Login - PDV Padaria" Height="500" Width="420"
+        Title="Login - Padaria Venâncio" Icon="pack://application:,,,/Resources/app.ico" Height="500" Width="420"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -147,33 +147,13 @@
                     FontSize="16" Cursor="Hand" Click="CloseButton_Click" Focusable="False"/>
 
             <!-- Ícone e Títulos -->
-            <StackPanel Grid.Row="1" HorizontalAlignment="Center" Margin="0,10,0,30">
-                <Path Width="48" Height="48" HorizontalAlignment="Center" Margin="0,0,0,15"
-                      Data="M12,2L2,7L12,12L22,7L12,2M2,17L12,22L22,17M2,12L12,17L22,12">
-                    <Path.Fill>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#f59e0b" Offset="0.0"/>
-                            <GradientStop Color="#ea580c" Offset="1.0"/>
-                        </LinearGradientBrush>
-                    </Path.Fill>
-                </Path>
-                <TextBlock Text="PADARIA" FontSize="28" FontWeight="ExtraBold" HorizontalAlignment="Center">
-                    <TextBlock.Foreground>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                            <GradientStop Color="#fcd34d" Offset="0.0"/>
-                            <GradientStop Color="#fb923c" Offset="1.0"/>
-                        </LinearGradientBrush>
-                    </TextBlock.Foreground>
-                </TextBlock>
-                <TextBlock Text="PDV &amp; GESTÃO PREMIUM" FontSize="11" FontWeight="Medium" HorizontalAlignment="Center" Foreground="{StaticResource TextSubtle}" Margin="0,4,0,0"/>
-            </StackPanel>
+            <Image Grid.Row="1" Source="pack://application:,,,/Resources/logo.png" Stretch="Uniform" Height="100" HorizontalAlignment="Center" Margin="0,10,0,30" RenderOptions.BitmapScalingMode="HighQuality"/>
 
             <!-- Formulário de Login -->
             <StackPanel Grid.Row="2" VerticalAlignment="Center">
                 <!-- Campo E-mail -->
                 <TextBlock Text="E-mail" Foreground="#94a3b8" FontSize="12" Margin="0,0,0,6"/>
-                <TextBox x:Name="EmailInput" Style="{StaticResource RoundedInputBox}" Margin="0,0,0,18"
-                          Text="dono@padaria.com.br"/>
+                <TextBox x:Name="EmailInput" Style="{StaticResource RoundedInputBox}" Margin="0,0,0,18"/>
 
                 <!-- Campo Senha -->
                 <TextBlock Text="Senha" Foreground="#94a3b8" FontSize="12" Margin="0,0,0,6"/>
@@ -187,34 +167,7 @@
                 <!-- Botão Entrar -->
                 <Button x:Name="LoginButton" Content="Entrar no Caixa" Style="{StaticResource GoldButton}" Click="LoginButton_Click"/>
 
-                <!-- Atalhos de Teste Rápido (Debug) -->
-                <TextBlock Text="Atalhos de Teste Rápido (Debug)" Foreground="#475569" FontSize="10" HorizontalAlignment="Center" Margin="0,20,0,8" FontWeight="SemiBold"/>
-                <UniformGrid Columns="3" Rows="1">
-                    <Button x:Name="BtnTestDono" Content="Dono" Click="TestLoginShortcut_Click" Tag="dono@padaria.com.br"
-                            Background="#141419" Foreground="#94a3b8" BorderBrush="#26262e" BorderThickness="1" Margin="2" Padding="5" FontSize="11" Cursor="Hand">
-                        <Button.Resources>
-                            <Style TargetType="Border">
-                                <Setter Property="CornerRadius" Value="4"/>
-                            </Style>
-                        </Button.Resources>
-                    </Button>
-                    <Button x:Name="BtnTestGerente" Content="Gerente" Click="TestLoginShortcut_Click" Tag="gerente.centro@padaria.com.br"
-                            Background="#141419" Foreground="#94a3b8" BorderBrush="#26262e" BorderThickness="1" Margin="2" Padding="5" FontSize="11" Cursor="Hand">
-                        <Button.Resources>
-                            <Style TargetType="Border">
-                                <Setter Property="CornerRadius" Value="4"/>
-                            </Style>
-                        </Button.Resources>
-                    </Button>
-                    <Button x:Name="BtnTestAtendente" Content="Caixa" Click="TestLoginShortcut_Click" Tag="atendente.centro@padaria.com.br"
-                            Background="#141419" Foreground="#94a3b8" BorderBrush="#26262e" BorderThickness="1" Margin="2" Padding="5" FontSize="11" Cursor="Hand">
-                        <Button.Resources>
-                            <Style TargetType="Border">
-                                <Setter Property="CornerRadius" Value="4"/>
-                            </Style>
-                        </Button.Resources>
-                    </Button>
-                </UniformGrid>
+
             </StackPanel>
 
             <!-- Rodapé Informativo -->

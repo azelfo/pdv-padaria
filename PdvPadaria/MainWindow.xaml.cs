@@ -16,13 +16,49 @@ using QRCoder;
 using PdvPadaria.Models;
 using PdvPadaria.Services;
 using PdvPadaria.Views;
+using System.Runtime.InteropServices;
 
 namespace PdvPadaria
 {
     public partial class MainWindow : Window
     {
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr FindWindow(string lpClassName, string? lpWindowName);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        private const int SW_HIDE = 0;
+        private const int SW_SHOW = 5;
+
+        private void SafeShowHideTaskbar(bool show)
+        {
+            try
+            {
+                IntPtr taskbarHandle = FindWindow("Shell_TrayWnd", null);
+                if (taskbarHandle != IntPtr.Zero)
+                {
+                    ShowWindow(taskbarHandle, show ? SW_SHOW : SW_HIDE);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Erro ao gerenciar barra de tarefas: {ex.Message}");
+            }
+        }
+
         public User CurrentUser { get; private set; }
         private readonly ObservableCollection<CartItemView> _cartItems = new ObservableCollection<CartItemView>();
+        
+        // Variáveis para salvar o estado e dimensões da janela antes do Kiosk Mode
+        private double _prevLeft;
+        private double _prevTop;
+        private double _prevWidth;
+        private double _prevHeight;
+        private WindowState _prevWindowState = WindowState.Maximized;
+        
+        // Controle de seletores e estados de rede para Dashboard
+        private bool _dashSelectorReady = false;
         private string _selectedPaymentMethod = string.Empty;
         private int _subtotalCentavos = 0;
         private int _discountCentavos = 0;
@@ -42,15 +78,14 @@ namespace PdvPadaria
         private bool _historySelectorReady = false;
         private bool _suppressStockStoreEvent = false;
         private List<RedeLojaView> _lojasCache = new List<RedeLojaView>();
-        private string? _activeSaleId;
-        private System.Threading.CancellationTokenSource? _pixCts;
+        private int _valorRecebidoCentavos;
+        private string _stockCategoryFilter = "TODOS";
+        private List<StockProductView> _remoteStockCache = new List<StockProductView>();
 
         public enum PdvState
         {
             Consultation,
-            ActiveSale,
-            PaymentSelection,
-            CashPayment
+            ActiveSale
         }
 
         private PdvState _currentState = PdvState.Consultation;
@@ -83,7 +118,36 @@ namespace PdvPadaria
                 BtnRede.Visibility = Visibility.Collapsed;
             }
 
+            this.Deactivated += Window_Deactivated;
             Loaded += (s, e) => SetPdvState(PdvState.Consultation);
+        }
+
+        private void Window_Deactivated(object? sender, EventArgs e)
+        {
+            try
+            {
+                if (KioskToggle.IsChecked == true)
+                {
+                    this.Topmost = true;
+                    this.Activate();
+                    this.Focus();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Erro ao forçar foco no Kiosk: {ex.Message}");
+            }
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            base.OnClosed(e);
+            SafeShowHideTaskbar(true);
+        }
+
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            base.OnClosing(e);
         }
 
         // ViewModel auxiliar para renderizar a linha do carrinho de compras
@@ -237,6 +301,7 @@ namespace PdvPadaria
                 if (index == 1)
                 {
                     _ = SetupStockStoreSelector();
+                    UpdateStockFilterButtons();
                     if (string.IsNullOrEmpty(_stockRemoteStoreId)) LoadStock();
                     else _ = LoadRemoteStock(_stockRemoteStoreId);
                 }
@@ -248,6 +313,7 @@ namespace PdvPadaria
                 }
                 else if (index == 3)
                 {
+                    _ = SetupDashStoreSelector();
                     LoadDashboard();
                 }
                 else if (index == 4)
@@ -506,8 +572,8 @@ namespace PdvPadaria
             var inputWindow = new Window
             {
                 Title = "Lançar Pão por Valor",
-                Width = 380,
-                Height = 310,
+                Width = 460,
+                Height = 390,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
                 WindowStyle = WindowStyle.ToolWindow,
@@ -515,18 +581,19 @@ namespace PdvPadaria
                 Foreground = AppColors.TextPrimary
             };
 
-            var stack = new StackPanel { Margin = new Thickness(20) };
+            var stack = new StackPanel { Margin = new Thickness(25) };
             
-            var variationLabel = new TextBlock { Text = "Selecione a Variação do Pão:", Margin = new Thickness(0, 0, 0, 8), Foreground = AppColors.TextMuted, FontSize = 13, FontWeight = FontWeights.SemiBold };
+            var variationLabel = new TextBlock { Text = "Selecione a Variação do Pão:", Margin = new Thickness(0, 0, 0, 10), Foreground = AppColors.TextMuted, FontSize = 15, FontWeight = FontWeights.Bold };
             
             string selectedVariationCode = bread.Id == "prod-pao-massa-fina" ? "MASSA_FINA" : "CARIOCA";
 
             var btnCarioca = new Button 
             { 
                 Content = "Pão Carioca", 
-                Padding = new Thickness(10, 8, 10, 8),
+                Padding = new Thickness(15, 12, 15, 12),
                 Background = new System.Windows.Media.SolidColorBrush(selectedVariationCode == "CARIOCA" ? AppColors.AccentColor : AppColors.BorderSoftColor),
                 Foreground = selectedVariationCode == "CARIOCA" ? AppColors.BgBase : System.Windows.Media.Brushes.White,
+                FontSize = 16,
                 FontWeight = FontWeights.Bold,
                 Cursor = Cursors.Hand
             };
@@ -535,17 +602,18 @@ namespace PdvPadaria
             var btnMassaFina = new Button 
             { 
                 Content = "Pão Massa Fina", 
-                Padding = new Thickness(10, 8, 10, 8),
+                Padding = new Thickness(15, 12, 15, 12),
                 Background = new System.Windows.Media.SolidColorBrush(selectedVariationCode == "MASSA_FINA" ? AppColors.AccentColor : AppColors.BorderSoftColor),
                 Foreground = selectedVariationCode == "MASSA_FINA" ? AppColors.BgBase : System.Windows.Media.Brushes.White,
+                FontSize = 16,
                 FontWeight = FontWeights.Bold,
                 Cursor = Cursors.Hand
             };
             btnMassaFina.Resources.Add(typeof(Border), new Style(typeof(Border)) { Setters = { new Setter(Border.CornerRadiusProperty, new CornerRadius(6)) } });
 
-            var buttonsGrid = new Grid { Margin = new Thickness(0, 0, 0, 15) };
+            var buttonsGrid = new Grid { Margin = new Thickness(0, 0, 0, 20) };
             buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+            buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
             buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition());
             Grid.SetColumn(btnCarioca, 0);
             Grid.SetColumn(btnMassaFina, 2);
@@ -568,24 +636,25 @@ namespace PdvPadaria
                 btnCarioca.Foreground = System.Windows.Media.Brushes.White;
             };
 
-            var label = new TextBlock { Text = "Digite o valor em dinheiro do pão (R$):", Margin = new Thickness(0, 0, 0, 5), Foreground = AppColors.TextMuted };
-            var textBox = new TextBox { Padding = new Thickness(8), FontSize = 16, Background = AppColors.BgBase, Foreground = System.Windows.Media.Brushes.White, BorderBrush = AppColors.BorderSoft };
+            var label = new TextBlock { Text = "Digite o valor em dinheiro do pão (R$):", Margin = new Thickness(0, 0, 0, 8), Foreground = AppColors.TextMuted, FontSize = 14, FontWeight = FontWeights.SemiBold };
+            var textBox = new TextBox { Padding = new Thickness(10), FontSize = 22, FontWeight = FontWeights.Bold, Background = AppColors.BgBase, Foreground = System.Windows.Media.Brushes.White, BorderBrush = AppColors.BorderSoft };
             
             var previewLabel = new TextBlock 
             { 
                 Text = "Quantidade: 0 pães", 
                 Foreground = AppColors.Accent,
                 FontWeight = FontWeights.Bold,
-                FontSize = 14,
-                Margin = new Thickness(0, 10, 0, 5),
+                FontSize = 18,
+                Margin = new Thickness(0, 15, 0, 10),
                 HorizontalAlignment = HorizontalAlignment.Center
             };
 
             var button = new Button 
             { 
                 Content = "Confirmar Lançamento", 
-                Margin = new Thickness(0, 10, 0, 0), 
-                Padding = new Thickness(10),
+                Margin = new Thickness(0, 15, 0, 0), 
+                Padding = new Thickness(12),
+                FontSize = 16,
                 Background = AppColors.Accent,
                 Foreground = AppColors.BgBase,
                 FontWeight = FontWeights.Bold
@@ -819,8 +888,6 @@ namespace PdvPadaria
             _totalCentavos = Math.Max(0, _subtotalCentavos - _discountCentavos);
 
             TotalText.Text = $"R$ {_totalCentavos / 100.0:F2}";
-
-            UpdateTroco();
         }
 
         private void ApplyDiscount_Click(object sender, RoutedEventArgs e)
@@ -834,38 +901,6 @@ namespace PdvPadaria
 
         // Método PaymentMethod_Click removido (substituído por seleção automática de abas no TabControl)
 
-        private void CashReceivedInput_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            UpdateTroco();
-        }
-
-        private void UpdateTroco()
-        {
-            if (TryParseDouble(CashReceivedInput.Text, out double receivedVal))
-            {
-                int receivedCentavos = (int)Math.Round(receivedVal * 100);
-                int changeCentavos = receivedCentavos - _totalCentavos;
-
-                if (changeCentavos >= 0)
-                {
-                    ChangeText.Text = $"R$ {changeCentavos / 100.0:F2}";
-                }
-                else
-                {
-                    ChangeText.Text = "R$ 0,00";
-                }
-            }
-            else
-            {
-                ChangeText.Text = "R$ 0,00";
-            }
-        }
-
-        private void ConfirmCashReceived_Click(object sender, RoutedEventArgs e)
-        {
-            FinishSaleFlow();
-        }
-
         private void FinishSaleButton_Click(object sender, RoutedEventArgs e)
         {
             FinishSaleFlow();
@@ -876,19 +911,6 @@ namespace PdvPadaria
             if (!_cartItems.Any())
             {
                 MessageBox.Show("Adicione pelo menos um item ao carrinho.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            if (string.IsNullOrEmpty(_selectedPaymentMethod))
-            {
-                MessageBox.Show("Selecione um método de pagamento.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            // Se for PIX e já tivermos a venda pendente gravada localmente, apenas conclui a aprovação
-            if (_selectedPaymentMethod == "PIX" && !string.IsNullOrEmpty(_activeSaleId))
-            {
-                await ConcluirVendaPixAprovadaAsync(_activeSaleId);
                 return;
             }
 
@@ -917,10 +939,10 @@ namespace PdvPadaria
                     Notes = string.IsNullOrEmpty(terminalName) ? null : $"[{terminalName}]"
                 };
 
-                if (_selectedPaymentMethod == "DINHEIRO" && TryParseDouble(CashReceivedInput.Text, out double rec))
+                if (_selectedPaymentMethod == "DINHEIRO")
                 {
-                    sale.ReceivedAmount = (int)(rec * 100);
-                    sale.ChangeAmount = sale.ReceivedAmount - _totalCentavos;
+                    sale.ReceivedAmount = _valorRecebidoCentavos;
+                    sale.ChangeAmount = _valorRecebidoCentavos - _totalCentavos;
                 }
 
                 await App.Database.RunInTransactionAsync((tx) =>
@@ -967,18 +989,15 @@ namespace PdvPadaria
                     }
                 });
 
+                // Prossiga com a impressão do cupom fiscal do PDV
+                await ImprimirCupomFiscalAsync(saleId);
+
                 MessageBox.Show("Venda realizada com sucesso!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
 
                 _cartItems.Clear();
                 _discountCentavos = 0;
                 _selectedPaymentMethod = string.Empty;
-                CashReceivedInput.Text = string.Empty;
-                ChangeText.Text = "R$ 0,00";
-
-                // Reseta estado de pagamento do PIX
-                _pixCts?.Cancel();
-                _pixCts = null;
-                _activeSaleId = null;
+                _valorRecebidoCentavos = 0;
 
                 UpdateTotals();
                 SetPdvState(PdvState.Consultation);
@@ -1064,45 +1083,6 @@ namespace PdvPadaria
                     }
                 }
             }
-            else if (_currentState == PdvState.PaymentSelection || _currentState == PdvState.CashPayment)
-            {
-                if (e.Key == Key.F5)
-                {
-                    e.Handled = true;
-                    PaymentTabControl.SelectedIndex = 0;
-                    CashReceivedInput.Focus();
-                }
-                else if (e.Key == Key.F6)
-                {
-                    e.Handled = true;
-                    PaymentTabControl.SelectedIndex = 1;
-                }
-                else if (e.Key == Key.F7)
-                {
-                    e.Handled = true;
-                    PaymentTabControl.SelectedIndex = 2;
-                }
-                else if (e.Key == Key.Escape)
-                {
-                    e.Handled = true;
-                    SetPdvState(PdvState.ActiveSale);
-                }
-                else if (e.Key == Key.Enter)
-                {
-                    e.Handled = true;
-                    if (PaymentTabControl.SelectedIndex == 0) // Dinheiro
-                    {
-                        if (!string.IsNullOrEmpty(CashReceivedInput.Text))
-                        {
-                            FinishSaleFlow();
-                        }
-                    }
-                    else // PIX ou Cartão
-                    {
-                        FinishSaleFlow();
-                    }
-                }
-            }
         }
 
         private async void ProcessBarcodeScan(string barcode)
@@ -1152,7 +1132,7 @@ namespace PdvPadaria
         {
             _currentState = state;
             
-            if (GridConsulta == null || GridVenda == null || PanelPrecoVenda == null || PaymentTabControl == null)
+            if (GridConsulta == null || GridVenda == null || PanelPrecoVenda == null)
                 return;
 
             switch (state)
@@ -1160,7 +1140,6 @@ namespace PdvPadaria
                 case PdvState.Consultation:
                     GridConsulta.Visibility = Visibility.Visible;
                     GridVenda.Visibility = Visibility.Collapsed;
-                    PaymentTabControl.Visibility = Visibility.Collapsed;
                     
                     ConsultationProductName.Text = "Passe um produto no leitor";
                     ConsultationProductPrice.Text = "R$ 0,00";
@@ -1179,40 +1158,9 @@ namespace PdvPadaria
                     GridConsulta.Visibility = Visibility.Collapsed;
                     GridVenda.Visibility = Visibility.Visible;
                     PanelPrecoVenda.Visibility = Visibility.Visible;
-                    PaymentTabControl.Visibility = Visibility.Collapsed;
                     
-                    // Se cancelou o fluxo do PIX, remove a venda pendente e reverte estoque
-                    if (_selectedPaymentMethod == "PIX" && !string.IsNullOrEmpty(_activeSaleId))
-                    {
-                        var saleIdToCancel = _activeSaleId;
-                        _pixCts?.Cancel();
-                        _pixCts = null;
-                        _activeSaleId = null;
-
-                        _ = Task.Run(async () =>
-                        {
-                            await CancelarVendaLocalAsync(saleIdToCancel);
-                            await RunSincronizacaoSilenciosa();
-                        });
-                    }
-
                     SearchBox.Text = string.Empty;
                     SearchBox.Focus();
-                    break;
-
-                case PdvState.PaymentSelection:
-                case PdvState.CashPayment:
-                    _activeSaleId = Guid.NewGuid().ToString();
-                    GridConsulta.Visibility = Visibility.Collapsed;
-                    GridVenda.Visibility = Visibility.Visible;
-                    PanelPrecoVenda.Visibility = Visibility.Collapsed;
-                    PaymentTabControl.Visibility = Visibility.Visible;
-                    
-                    PaymentTabControl.SelectedIndex = 0;
-                    _selectedPaymentMethod = "DINHEIRO";
-                    CashReceivedInput.Text = string.Empty;
-                    ChangeText.Text = "R$ 0,00";
-                    CashReceivedInput.Focus();
                     break;
             }
         }
@@ -1224,377 +1172,107 @@ namespace PdvPadaria
 
         private void ConfirmSaleBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (_cartItems.Any())
-            {
-                SetPdvState(PdvState.PaymentSelection);
-            }
-            else
+            if (!_cartItems.Any())
             {
                 MessageBox.Show("Adicione pelo menos um item ao carrinho.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
             }
+
+            AbrirModalPagamento();
         }
 
-        private void CancelPaymentSelection_Click(object sender, RoutedEventArgs e)
+        private void AbrirModalPagamento()
         {
-            SetPdvState(PdvState.ActiveSale);
-        }
-
-        private async void PaymentTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (e.Source != PaymentTabControl) return;
-
-            // Se o método anterior era PIX e tinha uma venda ativa, cancela para estornar estoque
-            if (_selectedPaymentMethod == "PIX" && !string.IsNullOrEmpty(_activeSaleId))
+            var paymentWindow = new Views.PaymentWindow(_totalCentavos);
+            paymentWindow.Owner = this;
+            if (paymentWindow.ShowDialog() == true)
             {
-                var saleIdToCancel = _activeSaleId;
-                _pixCts?.Cancel();
-                _pixCts = null;
-                _activeSaleId = null;
-
-                _ = Task.Run(async () =>
+                _selectedPaymentMethod = paymentWindow.SelectedPaymentMethod;
+                if (_selectedPaymentMethod == "DINHEIRO")
                 {
-                    await CancelarVendaLocalAsync(saleIdToCancel);
-                    await RunSincronizacaoSilenciosa();
-                });
-            }
-
-            if (PaymentTabControl.SelectedIndex == 0)
-            {
-                _selectedPaymentMethod = "DINHEIRO";
-                CashReceivedInput.Focus();
-            }
-            else if (PaymentTabControl.SelectedIndex == 1)
-            {
-                _selectedPaymentMethod = "PIX";
-                await IniciarFluxoPix();
-            }
-            else if (PaymentTabControl.SelectedIndex == 2)
-            {
-                _selectedPaymentMethod = "CARTAO_CREDITO";
-            }
-        }
-
-        private async Task IniciarFluxoPix()
-        {
-            _pixCts?.Cancel();
-            _pixCts = new System.Threading.CancellationTokenSource();
-            var token = _pixCts.Token;
-
-            // Limpa o estado visual do XAML
-            PixQrCodeImage.Source = null;
-            PixCopiaColaTextBox.Text = string.Empty;
-
-            // Mostra o carregamento
-            PanelPixLoading.Visibility = Visibility.Visible;
-            PanelPixMain.Visibility = Visibility.Collapsed;
-
-            try
-            {
-                if (string.IsNullOrEmpty(_activeSaleId))
+                    _valorRecebidoCentavos = paymentWindow.ReceivedAmountCentavos;
+                }
+                else
                 {
-                    _activeSaleId = Guid.NewGuid().ToString();
+                    _valorRecebidoCentavos = 0;
                 }
 
-                // 1. Salva a venda localmente com status PENDENTE e abate o estoque local
-                await SalvarVendaComStatusAsync(_activeSaleId, "PENDENTE");
-
-                // 2. Sincroniza imediatamente com a nuvem (para o webhook achar a venda)
-                await SincronizarDadosNuvem();
-
-                if (token.IsCancellationRequested) return;
-
-                // 3. Gera o QR Code Estático localmente e retorna o Base64
-                string base64Image = InfinitePayService.GerarQrCodePixLocal(_activeSaleId, _totalCentavos);
-
-                if (token.IsCancellationRequested) return;
-
-                // Renderiza o QR Code a partir do Base64
-                if (base64Image.StartsWith("data:image/png;base64,"))
-                {
-                    string base64Data = base64Image.Substring("data:image/png;base64,".Length);
-                    byte[] imageBytes = Convert.FromBase64String(base64Data);
-
-                    var bitmapImage = new BitmapImage();
-                    using (var ms = new MemoryStream(imageBytes))
-                    {
-                        bitmapImage.BeginInit();
-                        bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                        bitmapImage.StreamSource = ms;
-                        bitmapImage.EndInit();
-                    }
-                    bitmapImage.Freeze();
-                    PixQrCodeImage.Source = bitmapImage;
-                }
-
-                // Não temos a string PIX Copia e Cola facilmente do GerarQrCodePixLocal que retorna a imagem,
-                // mas podemos ocultar a TextBox ou colocar uma instrução genérica.
-                PixCopiaColaTextBox.Text = "Escaneie o QR Code acima";
-
-                // Troca visibilidade dos painéis
-                PanelPixLoading.Visibility = Visibility.Collapsed;
-                PanelPixMain.Visibility = Visibility.Visible;
-                BorderPixOnlineStatus.Visibility = Visibility.Visible;
-                TxtPixInstrucao.Text = "Escaneie o QR Code para abrir a página segura de pagamento e concluir o PIX no seu celular.";
-
-                // Inicia o polling de verificação de pagamento consultando a nuvem (Supabase)
-                _ = IniciarPollingPix(_activeSaleId, token);
-            }
-            catch (Exception ex)
-            {
-                if (token.IsCancellationRequested) return;
-
-                System.Diagnostics.Debug.WriteLine($"[PIX InfinitePay Error] {ex.Message}");
-
-                // Se salvou a venda e deu erro depois, estorna para não manter lixo pendente e devolver estoque
-                if (!string.IsNullOrEmpty(_activeSaleId))
-                {
-                    await CancelarVendaLocalAsync(_activeSaleId);
-                    await RunSincronizacaoSilenciosa();
-                }
-
-                // Avisa o lojista
-                MessageBox.Show(
-                    $"Não foi possível gerar a cobrança PIX na InfinitePay.\n\nDetalhes do Erro:\n{ex.Message}\n\nO caixa voltará à confirmação manual para esta transação.",
-                    "Falha na API InfinitePay",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error
-                );
-
-                // Em caso de erro, mostramos o layout mas permitimos apenas a confirmação manual (Enter)
-                PanelPixLoading.Visibility = Visibility.Collapsed;
-                PanelPixMain.Visibility = Visibility.Visible;
-                BorderPixOnlineStatus.Visibility = Visibility.Collapsed;
-                TxtPixInstrucao.Text = "⚠️ ERRO API: Confirme o pagamento com o cliente e clique/pressione CONFIRMAR PAGAMENTO MANUAL.";
+                FinishSaleFlow();
             }
         }
 
-        private void RenderizarQrCode(string text)
+        #region Métodos de Impressão de Cupom
+
+        private async Task ImprimirCupomFiscalAsync(string saleId)
         {
             try
             {
-                using (var qrGenerator = new QRCodeGenerator())
-                {
-                    var qrCodeData = qrGenerator.CreateQrCode(text, QRCodeGenerator.ECCLevel.Q);
-                    var qrCode = new PngByteQRCode(qrCodeData);
-                    byte[] qrCodeBytes = qrCode.GetGraphic(20);
+                var connection = App.Database.GetConnection();
+                var sale = await connection.FindAsync<Sale>(saleId);
+                if (sale == null) return;
 
-                    var bitmapImage = new BitmapImage();
-                    using (var ms = new MemoryStream(qrCodeBytes))
-                    {
-                        bitmapImage.BeginInit();
-                        bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
-                        bitmapImage.StreamSource = ms;
-                        bitmapImage.EndInit();
-                    }
-                    bitmapImage.Freeze();
-                    PixQrCodeImage.Source = bitmapImage;
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Erro ao renderizar o QR Code: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
+                var items = await connection.Table<SaleItem>().Where(i => i.SaleId == saleId).ToListAsync();
 
-        private async Task IniciarPollingPix(string saleId, System.Threading.CancellationToken token)
-        {
-            while (!token.IsCancellationRequested)
-            {
-                try
-                {
-                    await Task.Delay(2000, token);
-
-                    bool isPaid = await InfinitePayService.VerificarPagamentoInfinitePayAsync(saleId);
-
-                    if (isPaid)
-                    {
-                        await Dispatcher.InvokeAsync(async () =>
-                        {
-                            await ConcluirVendaPixAprovadaAsync(saleId);
-                        });
-                        break;
-                    }
-                }
-                catch (TaskCanceledException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[Polling InfinitePay Error] {ex.Message}");
-                }
-            }
-        }
-
-        #region Métodos de Suporte à Integração InfinitePay
-
-        private async Task SalvarVendaComStatusAsync(string saleId, string status)
-        {
-            var connection = App.Database.GetConnection();
-
-            string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
-            string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
-
-            var terminalName = EnvService.Get("TERMINAL_NAME");
-            var sale = new Sale
-            {
-                Id = saleId,
-                StoreId = storeId,
-                UserId = CurrentUser.Id,
-                TenantId = tenantId,
-                SaleDate = DateTime.Now,
-                Subtotal = _subtotalCentavos,
-                Discount = _discountCentavos,
-                Total = _totalCentavos,
-                PaymentMethod = "PIX",
-                PaymentStatus = status,
-                IsSynced = false,
-                Notes = string.IsNullOrEmpty(terminalName) ? null : $"[{terminalName}]"
-            };
-
-            await App.Database.RunInTransactionAsync((tx) =>
-            {
-                tx.Insert(sale);
-
-                foreach (var item in _cartItems)
-                {
-                    var saleItem = new SaleItem
-                    {
-                        Id = Guid.NewGuid().ToString(),
-                        SaleId = saleId,
-                        ProductId = item.ProductId,
-                        Quantity = item.Quantity,
-                        PriceUnit = item.PriceUnit,
-                        Subtotal = item.Subtotal,
-                        Type = item.ProductType
-                    };
-
-                    var stockMovement = new StockMovement
-                    {
-                        Id = Guid.NewGuid().ToString(),
-                        ProductId = item.ProductId,
-                        StoreId = storeId,
-                        UserId = CurrentUser.Id,
-                        TenantId = tenantId,
-                        Type = "SAIDA",
-                        Quantity = item.Quantity,
-                        Reason = "VENDA",
-                        SaleId = saleId,
-                        CreatedAt = DateTime.Now,
-                        IsSynced = false
-                    };
-
-                    tx.Insert(saleItem);
-                    tx.Insert(stockMovement);
-
-                    var product = tx.Find<Product>(item.ProductId);
-                    if (product != null)
-                    {
-                        product.LocalStockQuantity = Math.Max(0, product.LocalStockQuantity - item.Quantity);
-                        tx.Update(product);
-                    }
-                }
-            });
-        }
-
-        private async Task AtualizarStatusVendaLocalAsync(string saleId, string status)
-        {
-            var connection = App.Database.GetConnection();
-            var sale = await connection.FindAsync<Sale>(saleId);
-            if (sale != null)
-            {
-                sale.PaymentStatus = status;
-                sale.IsSynced = false; // Força re-sincronizar para a nuvem
-                await connection.UpdateAsync(sale);
-            }
-        }
-
-        private async Task CancelarVendaLocalAsync(string saleId)
-        {
-            var connection = App.Database.GetConnection();
-            var sale = await connection.FindAsync<Sale>(saleId);
-            if (sale == null || sale.PaymentStatus == "CANCELADO") return;
-
-            string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
-            string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
-
-            sale.PaymentStatus = "CANCELADO";
-            sale.IsSynced = false; // Força sincronização do cancelamento
-
-            var items = await connection.Table<SaleItem>().Where(i => i.SaleId == saleId).ToListAsync();
-
-            await App.Database.RunInTransactionAsync((tx) =>
-            {
-                tx.Update(sale);
-
+                // Montar o cupom fiscal no estilo impressora térmica (40 colunas)
+                var cupom = new System.Text.StringBuilder();
+                cupom.AppendLine("========================================");
+                cupom.AppendLine("            PADARIA VENÂNCIO            ");
+                cupom.AppendLine("     CNPJ: 00.000.000/0001-00           ");
+                cupom.AppendLine("       Rua da Padaria, 123 - Centro     ");
+                cupom.AppendLine("========================================");
+                cupom.AppendLine($"CUPOM FISCAL SIMULADO: {sale.Id.Substring(0, 8)}");
+                cupom.AppendLine($"Data: {sale.SaleDate:dd/MM/yyyy HH:mm:ss}");
+                cupom.AppendLine($"Método Pagto: {sale.PaymentMethod}");
+                cupom.AppendLine("----------------------------------------");
+                cupom.AppendLine("ITENS:");
+                
                 foreach (var item in items)
                 {
-                    var stockMovement = new StockMovement
-                    {
-                        Id = Guid.NewGuid().ToString(),
-                        ProductId = item.ProductId,
-                        StoreId = storeId,
-                        UserId = CurrentUser.Id,
-                        TenantId = tenantId,
-                        Type = "ENTRADA",
-                        Quantity = item.Quantity,
-                        Reason = "AJUSTE_MANUAL",
-                        SaleId = saleId,
-                        CreatedAt = DateTime.Now,
-                        IsSynced = false
-                    };
+                    var product = await connection.FindAsync<Product>(item.ProductId);
+                    string name = product?.Name ?? "Produto Desconhecido";
+                    if (name.Length > 20) name = name.Substring(0, 20);
 
-                    tx.Insert(stockMovement);
+                    string qtyStr = item.Type == "PAO_FRANCES" || item.Quantity % 1 == 0
+                        ? $"{item.Quantity:F0} UN"
+                        : $"{item.Quantity:F3} KG";
 
-                    var product = tx.Find<Product>(item.ProductId);
-                    if (product != null)
-                    {
-                        product.LocalStockQuantity = product.LocalStockQuantity + item.Quantity;
-                        tx.Update(product);
-                    }
+                    string priceStr = $"R$ {item.PriceUnit / 100.0:F2}";
+                    string subtotalStr = $"R$ {item.Subtotal / 100.0:F2}";
+
+                    cupom.AppendLine($"{name,-20}");
+                    cupom.AppendLine($"  {qtyStr,-10} x {priceStr,-10} {subtotalStr,14}");
                 }
-            });
-        }
 
-        private async Task ConcluirVendaPixAprovadaAsync(string saleId)
-        {
-            try
-            {
-                await AtualizarStatusVendaLocalAsync(saleId, "APROVADO");
+                cupom.AppendLine("----------------------------------------");
+                if (sale.Discount > 0)
+                {
+                    cupom.AppendLine($"Subtotal:                R$ {sale.Subtotal / 100.0:F2}");
+                    cupom.AppendLine($"Desconto:               -R$ {sale.Discount / 100.0:F2}");
+                }
+                cupom.AppendLine($"TOTAL:                   R$ {sale.Total / 100.0:F2}");
+                cupom.AppendLine("========================================");
+                cupom.AppendLine("      Obrigado pela preferência!       ");
+                cupom.AppendLine("========================================");
 
-                MessageBox.Show("Pagamento PIX recebido e confirmado via InfinitePay!", "PIX Confirmado", MessageBoxButton.OK, MessageBoxImage.Information);
+                // Gravar o cupom em arquivo de texto no AppData
+                string appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "pdv-padaria", "comprovantes");
+                if (!Directory.Exists(appDataPath))
+                {
+                    Directory.CreateDirectory(appDataPath);
+                }
 
-                _cartItems.Clear();
-                _discountCentavos = 0;
-                _selectedPaymentMethod = string.Empty;
-                CashReceivedInput.Text = string.Empty;
-                ChangeText.Text = "R$ 0,00";
+                string filePath = Path.Combine(appDataPath, $"cupom_{saleId}.txt");
+                await File.WriteAllTextAsync(filePath, cupom.ToString(), System.Text.Encoding.UTF8);
 
-                _pixCts?.Cancel();
-                _pixCts = null;
-                _activeSaleId = null;
-
-                UpdateTotals();
-                SetPdvState(PdvState.Consultation);
-
-                _ = Task.Run(async () => await RunSincronizacaoSilenciosa());
+                System.Diagnostics.Debug.WriteLine($"[Cupom Impresso]: {filePath}");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Erro ao concluir venda PIX: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Diagnostics.Debug.WriteLine($"[Erro ao imprimir cupom]: {ex.Message}");
             }
         }
 
         #endregion
-
-        private void CopyPixCodeBtn_Click(object sender, RoutedEventArgs e)
-        {
-            if (!string.IsNullOrEmpty(PixCopiaColaTextBox.Text))
-            {
-                Clipboard.SetText(PixCopiaColaTextBox.Text);
-                MessageBox.Show("Código PIX copiado para a área de transferência!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-        }
 
         private void ConsultationSearchButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1658,9 +1336,34 @@ namespace PdvPadaria
 
         private void KioskToggle_Checked(object sender, RoutedEventArgs e)
         {
+            // Salvar estado e tamanho da janela antes de entrar em modo Kiosk
+            _prevLeft = this.Left;
+            _prevTop = this.Top;
+            _prevWidth = this.Width;
+            _prevHeight = this.Height;
+            _prevWindowState = this.WindowState;
+
+            // 1. Primeiro, oculte a barra de tarefas via API (ShowWindow)
+            SafeShowHideTaskbar(false);
+
+            // 2. Mude o WindowState do Form para 'Normal'
+            this.WindowState = WindowState.Normal;
+
+            // 3. Defina o estilo de borda para None (no WPF: WindowStyle = WindowStyle.None e ResizeMode = ResizeMode.NoResize)
             this.WindowStyle = WindowStyle.None;
-            this.WindowState = WindowState.Maximized;
+            this.ResizeMode = ResizeMode.NoResize;
+
+            // 4. Force as dimensões manuais ignorando a WorkingArea usando SystemParameters
+            this.Top = 0;
+            this.Left = 0;
+            this.Width = SystemParameters.PrimaryScreenWidth;
+            this.Height = SystemParameters.PrimaryScreenHeight;
+
+            // 5. Forçar o WPF a atualizar o layout imediatamente e trazer para a frente
+            this.UpdateLayout();
             this.Topmost = true;
+            this.Activate();
+            this.Focus();
         }
 
         private void KioskToggle_Unchecked(object sender, RoutedEventArgs e)
@@ -1715,7 +1418,17 @@ namespace PdvPadaria
             if (authenticated)
             {
                 this.WindowStyle = WindowStyle.SingleBorderWindow;
-                this.WindowState = WindowState.Normal;
+                this.ResizeMode = ResizeMode.CanResize;
+                
+                // Mostrar a barra de tarefas de volta
+                SafeShowHideTaskbar(true);
+
+                // Restaurar dimensões e estado originais
+                this.Left = _prevLeft;
+                this.Top = _prevTop;
+                this.Width = _prevWidth;
+                this.Height = _prevHeight;
+                this.WindowState = _prevWindowState;
                 this.Topmost = false;
             }
             else
@@ -1773,6 +1486,11 @@ namespace PdvPadaria
                         MinStock = p.MinStock,
                         CategoryName = categoryMap.TryGetValue(p.CategoryId, out var name) ? name : "Geral"
                     })
+                    .Where(v => {
+                        if (_stockCategoryFilter == "COMERCIAIS") return v.Type.ToUpper() == "NORMAL";
+                        if (_stockCategoryFilter == "PRODUCAO") return v.Type.ToUpper() != "NORMAL";
+                        return true;
+                    })
                     .OrderBy(p => p.Name)
                     .ToList();
 
@@ -1782,6 +1500,61 @@ namespace PdvPadaria
             {
                 MessageBox.Show($"Erro ao carregar estoque: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private void UpdateStockFilterButtons()
+        {
+            if (BtnFilterStockAll == null || BtnFilterStockCommercial == null || BtnFilterStockProduction == null) return;
+
+            BtnFilterStockAll.Background = _stockCategoryFilter == "TODOS" ? AppColors.Accent : AppColors.BorderSoft;
+            BtnFilterStockAll.Foreground = _stockCategoryFilter == "TODOS" ? AppColors.BgBase : System.Windows.Media.Brushes.White;
+
+            BtnFilterStockCommercial.Background = _stockCategoryFilter == "COMERCIAIS" ? AppColors.Accent : AppColors.BorderSoft;
+            BtnFilterStockCommercial.Foreground = _stockCategoryFilter == "COMERCIAIS" ? AppColors.BgBase : System.Windows.Media.Brushes.White;
+
+            BtnFilterStockProduction.Background = _stockCategoryFilter == "PRODUCAO" ? AppColors.Accent : AppColors.BorderSoft;
+            BtnFilterStockProduction.Foreground = _stockCategoryFilter == "PRODUCAO" ? AppColors.BgBase : System.Windows.Media.Brushes.White;
+        }
+
+        private void BtnFilterStockAll_Click(object sender, RoutedEventArgs e)
+        {
+            _stockCategoryFilter = "TODOS";
+            UpdateStockFilterButtons();
+            if (string.IsNullOrEmpty(_stockRemoteStoreId))
+                LoadStock(SearchStockBox.Text.Trim());
+            else
+                ApplyRemoteStockFilter();
+        }
+
+        private void BtnFilterStockCommercial_Click(object sender, RoutedEventArgs e)
+        {
+            _stockCategoryFilter = "COMERCIAIS";
+            UpdateStockFilterButtons();
+            if (string.IsNullOrEmpty(_stockRemoteStoreId))
+                LoadStock(SearchStockBox.Text.Trim());
+            else
+                ApplyRemoteStockFilter();
+        }
+
+        private void BtnFilterStockProduction_Click(object sender, RoutedEventArgs e)
+        {
+            _stockCategoryFilter = "PRODUCAO";
+            UpdateStockFilterButtons();
+            if (string.IsNullOrEmpty(_stockRemoteStoreId))
+                LoadStock(SearchStockBox.Text.Trim());
+            else
+                ApplyRemoteStockFilter();
+        }
+
+        private void ApplyRemoteStockFilter()
+        {
+            if (_remoteStockCache == null) return;
+            var views = _remoteStockCache.Where(v => {
+                if (_stockCategoryFilter == "COMERCIAIS") return v.Type.ToUpper() == "NORMAL";
+                if (_stockCategoryFilter == "PRODUCAO") return v.Type.ToUpper() != "NORMAL";
+                return true;
+            }).ToList();
+            StockProductsList.ItemsSource = views;
         }
 
         private async void LoadLowStockAlerts()
@@ -1988,7 +1761,6 @@ namespace PdvPadaria
             var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
             _suppressStockStoreEvent = true;
             StockStoreSelector.Items.Clear();
-            StockStoreSelector.Items.Add(new ComboBoxItem { Content = "Minha loja (local)", Tag = "" });
             foreach (var l in lojas)
             {
                 if (string.IsNullOrEmpty(l.StoreId)) continue;
@@ -2042,6 +1814,11 @@ namespace PdvPadaria
             if (_suppressStockStoreEvent) return;
             string storeId = (StockStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
             _stockRemoteStoreId = storeId;
+
+            // Resetar filtro de estoque ao mudar de loja para evitar inconsistência
+            _stockCategoryFilter = "TODOS";
+            UpdateStockFilterButtons();
+
             SearchStockBox.IsEnabled = string.IsNullOrEmpty(storeId);
             if (string.IsNullOrEmpty(storeId)) LoadStock(SearchStockBox.Text.Trim());
             else _ = LoadRemoteStock(storeId);
@@ -2092,23 +1869,27 @@ namespace PdvPadaria
                 }
 
                 var views = new List<StockProductView>();
-                foreach (var p in (Newtonsoft.Json.Linq.JArray)j["estoque"]!)
+                if (j["estoque"] is Newtonsoft.Json.Linq.JArray estoqueArr)
                 {
-                    views.Add(new StockProductView
+                    foreach (var p in estoqueArr)
                     {
-                        Id = p["produto_id"]!.ToString(),
-                        Name = p["nome"]!.ToString(),
-                        CategoryName = string.Empty,
-                        Barcode = p["barcode"]?.ToString() ?? string.Empty,
-                        Type = p["tipo"]?.ToString() ?? string.Empty,
-                        UnitMeasure = p["unidade"]?.ToString() ?? "UN",
-                        PriceSale = (int)(p["preco_venda"] ?? 0),
-                        PriceCost = (int)(p["preco_custo"] ?? 0),
-                        LocalStockQuantity = (double)(p["quantidade"] ?? 0),
-                        MinStock = (double)(p["minimo"] ?? 0)
-                    });
+                        views.Add(new StockProductView
+                        {
+                            Id = p["produto_id"]?.ToString() ?? string.Empty,
+                            Name = p["nome"]?.ToString() ?? "Produto",
+                            CategoryName = string.Empty,
+                            Barcode = p["barcode"]?.ToString() ?? string.Empty,
+                            Type = p["tipo"]?.ToString() ?? string.Empty,
+                            UnitMeasure = p["unidade"]?.ToString() ?? "UN",
+                            PriceSale = (int?)p["preco_venda"] ?? 0,
+                            PriceCost = (int?)p["preco_custo"] ?? 0,
+                            LocalStockQuantity = (double?)p["quantidade"] ?? 0,
+                            MinStock = (double?)p["minimo"] ?? 0
+                        });
+                    }
                 }
-                StockProductsList.ItemsSource = views;
+                _remoteStockCache = views;
+                ApplyRemoteStockFilter();
             }
             catch (Exception ex)
             {
@@ -2242,7 +2023,6 @@ namespace PdvPadaria
         {
             _suppressStockStoreEvent = true;
             cb.Items.Clear();
-            cb.Items.Add(new ComboBoxItem { Content = "Minha loja (local)", Tag = "" });
             foreach (var l in lojas)
             {
                 if (string.IsNullOrEmpty(l.StoreId)) continue;
@@ -2843,6 +2623,30 @@ namespace PdvPadaria
             else _ = LoadRemoteHistory(_historyRemoteStoreId);
         }
 
+        private void SalesHistoryList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (SalesHistoryList.SelectedItem is SalesHistoryView selectedSale)
+            {
+                var win = new Views.SaleDetailsWindow(selectedSale.Id, _historyRemoteStoreId, CurrentUser, _donoEmail, _donoPassword)
+                {
+                    Owner = this
+                };
+                win.ShowDialog();
+
+                // Se a venda foi cancelada dentro da janela de detalhes, recarrega o histórico
+                if (win.WasCanceled)
+                {
+                    if (string.IsNullOrEmpty(_historyRemoteStoreId)) LoadSalesHistory();
+                    else _ = LoadRemoteHistory(_historyRemoteStoreId);
+
+                    _ = Task.Run(async () => await RunSincronizacaoSilenciosa());
+                }
+
+                // Desmarca a seleção para poder clicar de novo
+                SalesHistoryList.SelectedItem = null;
+            }
+        }
+
         private async void CancelSaleButton_Click(object sender, RoutedEventArgs e)
         {
             // Visualizando histórico de outra loja: cancelamento é feito na própria loja.
@@ -2917,12 +2721,195 @@ namespace PdvPadaria
 
         // ================= ABA 3: DASHBOARD LOGIC =================
 
+        private async Task SetupDashStoreSelector()
+        {
+            if (CurrentUser.Role.ToUpper() != "DONO")
+            {
+                DashStorePanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+            DashStorePanel.Visibility = Visibility.Visible;
+            if (_dashSelectorReady) return;
+
+            var lojas = _lojasCache.Count > 0 ? _lojasCache : await FetchLojasAsync();
+            _suppressStockStoreEvent = true;
+            DashStoreSelector.Items.Clear();
+            DashStoreSelector.Items.Add(new ComboBoxItem { Content = "Todas as sedes", Tag = "TODAS" });
+            foreach (var l in lojas)
+            {
+                if (string.IsNullOrEmpty(l.StoreId)) continue;
+                DashStoreSelector.Items.Add(new ComboBoxItem { Content = l.Nome, Tag = l.StoreId });
+            }
+            DashStoreSelector.SelectedIndex = 0;
+            _suppressStockStoreEvent = false;
+            _dashSelectorReady = true;
+        }
+
+        private async Task LoadRemoteDashboardRede(DateTime from, DateTime to)
+        {
+            try
+            {
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon)) return;
+
+                var payload = new { p_email = _donoEmail, p_password = _donoPassword, p_from = from, p_to = to };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_dashboard_rede");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    MessageBox.Show($"Sem conexão com a nuvem ({(int)resp.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+                if (j["error"] != null)
+                {
+                    string err = j["error"]!.ToString();
+                    MessageBox.Show(err == "invalid_credentials"
+                        ? "Faça login ONLINE como dono para ver o painel consolidado."
+                        : err, "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                var rede = j["rede"];
+                long totalBilling = 0;
+                int approvedCount = 0;
+                if (rede != null)
+                {
+                    totalBilling = (long?)rede["faturamento_centavos"] ?? 0;
+                    approvedCount = (int?)rede["vendas_qtd"] ?? 0;
+                }
+                double avgTicket = approvedCount > 0 ? (double)totalBilling / approvedCount : 0;
+
+                DashBillingText.Text = $"R$ {totalBilling / 100.0:F2}";
+                DashSalesCountText.Text = $"{approvedCount} vendas";
+                DashAvgTicketText.Text = $"R$ {avgTicket / 100.0:F2}";
+                DashCanceledSalesText.Text = "--";
+
+                DashCashAmountText.Text = "--";
+                DashPixAmountText.Text = "--";
+                DashCardAmountText.Text = "--";
+
+                var topProducts = new List<DashboardTopProduct>();
+                if (j["top_produtos"] is Newtonsoft.Json.Linq.JArray topArr)
+                {
+                    foreach (var t in topArr)
+                    {
+                        topProducts.Add(new DashboardTopProduct
+                        {
+                            ProductName = t["nome"]?.ToString() ?? "Desconhecido",
+                            Quantity = (double?)t["quantidade"] ?? 0,
+                            UnitMeasure = t["unidade"]?.ToString() ?? "UN",
+                            TotalCents = (int?)t["total_centavos"] ?? 0
+                        });
+                    }
+                }
+                DashTopProductsList.ItemsSource = topProducts;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Erro ao carregar Dashboard consolidado: " + ex.Message, "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async Task LoadRemoteDashboardLoja(string storeId, DateTime from, DateTime to)
+        {
+            try
+            {
+                string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+                string anon = EnvService.Get("SUPABASE_ANON_KEY");
+                if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon)) return;
+
+                var payload = new { p_email = _donoEmail, p_password = _donoPassword, p_store_id = storeId, p_from = from, p_to = to, p_payment = "TODOS" };
+                var content = new System.Net.Http.StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+
+                using var req = new System.Net.Http.HttpRequestMessage(
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_vendas_loja");
+                req.Content = content;
+                req.Headers.Add("apikey", anon);
+                req.Headers.Add("Authorization", "Bearer " + anon);
+
+                var resp = await _redeHttp.SendAsync(req);
+                string body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    MessageBox.Show($"Sem conexão com a nuvem ({(int)resp.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                var j = Newtonsoft.Json.Linq.JObject.Parse(body);
+                if (j["error"] != null)
+                {
+                    string err = j["error"]!.ToString();
+                    MessageBox.Show(err == "invalid_credentials"
+                        ? "Faça login ONLINE como dono para ver o dashboard da loja."
+                        : err, "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                var salesList = new List<Sale>();
+                foreach (var v in (Newtonsoft.Json.Linq.JArray)j["vendas"]!)
+                {
+                    salesList.Add(new Sale
+                    {
+                        Id = v["id"]?.ToString() ?? string.Empty,
+                        SaleDate = (DateTime)v["data"]!,
+                        Total = (int)(v["total_centavos"] ?? 0),
+                        PaymentMethod = v["metodo"]?.ToString() ?? string.Empty,
+                        PaymentStatus = v["status"]?.ToString() ?? string.Empty
+                    });
+                }
+
+                string paymentFilter = (DashPaymentFilterComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "TODOS";
+                if (paymentFilter != "TODOS")
+                {
+                    salesList = salesList.Where(s => s.PaymentMethod == paymentFilter).ToList();
+                }
+
+                var approvedSales = salesList.Where(s => s.PaymentStatus == "APROVADO").ToList();
+                var canceledSalesCount = salesList.Count(s => s.PaymentStatus == "CANCELADO");
+
+                int totalBilling = approvedSales.Sum(s => s.Total);
+                int approvedCount = approvedSales.Count;
+                double avgTicket = approvedCount > 0 ? (double)totalBilling / approvedCount : 0;
+
+                DashBillingText.Text = $"R$ {totalBilling / 100.0:F2}";
+                DashSalesCountText.Text = $"{approvedCount} vendas";
+                DashAvgTicketText.Text = $"R$ {avgTicket / 100.0:F2}";
+                DashCanceledSalesText.Text = $"{canceledSalesCount} cupons";
+
+                int cashTotal = approvedSales.Where(s => s.PaymentMethod == "DINHEIRO").Sum(s => s.Total);
+                int pixTotal = approvedSales.Where(s => s.PaymentMethod == "PIX").Sum(s => s.Total);
+                int cardTotal = approvedSales.Where(s => s.PaymentMethod == "CARTAO_CREDITO" || s.PaymentMethod == "CARTAO_DEBITO").Sum(s => s.Total);
+
+                DashCashAmountText.Text = $"R$ {cashTotal / 100.0:F2}";
+                DashPixAmountText.Text = $"R$ {pixTotal / 100.0:F2}";
+                DashCardAmountText.Text = $"R$ {cardTotal / 100.0:F2}";
+
+                // Não é possível popular produtos na loja remota sem puxar todos os itens da nuvem
+                DashTopProductsList.ItemsSource = null;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Erro ao carregar Dashboard da loja remota: " + ex.Message, "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         private async void LoadDashboard()
         {
             try
             {
-                var connection = App.Database.GetConnection();
-                
                 DateTime startDate = DashStartDatePicker.SelectedDate ?? DateTime.Today;
                 DateTime endDate = DashEndDatePicker.SelectedDate ?? DateTime.Today;
 
@@ -2934,6 +2921,24 @@ namespace PdvPadaria
                 DateTime fullStart = startDate.Date.Add(startTime);
                 DateTime fullEnd = endDate.Date.Add(endTime);
 
+                // Se o dono filtrou por loja na nuvem
+                if (CurrentUser.Role.ToUpper() == "DONO" && DashStoreSelector.SelectedItem != null)
+                {
+                    string selectedStore = (DashStoreSelector.SelectedItem as ComboBoxItem)?.Tag as string ?? "TODAS";
+                    if (selectedStore == "TODAS")
+                    {
+                        await LoadRemoteDashboardRede(fullStart, fullEnd);
+                        return;
+                    }
+                    else if (!string.IsNullOrEmpty(selectedStore))
+                    {
+                        await LoadRemoteDashboardLoja(selectedStore, fullStart, fullEnd);
+                        return;
+                    }
+                }
+
+                // Lógica de carregamento local (caixa local offline-first)
+                var connection = App.Database.GetConnection();
                 var sales = await connection.Table<Sale>()
                     .Where(s => s.SaleDate >= fullStart && s.SaleDate <= fullEnd)
                     .ToListAsync();
@@ -3189,38 +3194,53 @@ namespace PdvPadaria
                     return;
                 }
 
-                var rede = j["rede"]!;
-                RedeFat.Text = FormatBRL((long)rede["faturamento_centavos"]!);
-                RedeVendas.Text = rede["vendas_qtd"]!.ToString();
-                RedeLojas.Text = rede["lojas_total"]!.ToString();
+                var rede = j["rede"];
+                long totalBilling = 0;
+                int approvedCount = 0;
+                int totalStores = 0;
+                if (rede != null)
+                {
+                    totalBilling = (long?)rede["faturamento_centavos"] ?? 0;
+                    approvedCount = (int?)rede["vendas_qtd"] ?? 0;
+                    totalStores = (int?)rede["lojas_total"] ?? 0;
+                }
+                RedeFat.Text = FormatBRL(totalBilling);
+                RedeVendas.Text = approvedCount.ToString();
+                RedeLojas.Text = totalStores.ToString();
 
                 var lojas = new List<RedeLojaView>();
-                foreach (var l in (Newtonsoft.Json.Linq.JArray)j["lojas"]!)
+                if (j["lojas"] is Newtonsoft.Json.Linq.JArray lojasArr)
                 {
-                    int baixo = (int)l["estoque_baixo"]!;
-                    lojas.Add(new RedeLojaView
+                    foreach (var l in lojasArr)
                     {
-                        StoreId = l["storeId"]?.ToString() ?? string.Empty,
-                        Nome = l["nome"]!.ToString(),
-                        Resumo = $"{l["vendas_qtd"]} venda(s) · {l["estoque_produtos"]} produtos",
-                        FatString = FormatBRL((long)l["faturamento_centavos"]!),
-                        AlertaText = baixo > 0 ? $"{baixo} em falta" : string.Empty,
-                        TemAlerta = baixo > 0 ? Visibility.Visible : Visibility.Collapsed
-                    });
+                        int baixo = (int?)l["estoque_baixo"] ?? 0;
+                        lojas.Add(new RedeLojaView
+                        {
+                            StoreId = l["storeId"]?.ToString() ?? string.Empty,
+                            Nome = l["nome"]?.ToString() ?? "Loja",
+                            Resumo = $"{(l["vendas_qtd"] ?? 0)} venda(s) · {(l["estoque_produtos"] ?? 0)} produtos",
+                            FatString = FormatBRL((long?)l["faturamento_centavos"] ?? 0),
+                            AlertaText = baixo > 0 ? $"{baixo} em falta" : string.Empty,
+                            TemAlerta = baixo > 0 ? Visibility.Visible : Visibility.Collapsed
+                        });
+                    }
                 }
                 RedeLojasList.ItemsSource = lojas;
                 _lojasCache = lojas;
                 BuildLojaTabs(lojas);
 
                 var tops = new List<RedeTopView>();
-                foreach (var t in (Newtonsoft.Json.Linq.JArray)j["top_produtos"]!)
+                if (j["top_produtos"] is Newtonsoft.Json.Linq.JArray topsArr)
                 {
-                    tops.Add(new RedeTopView
+                    foreach (var t in topsArr)
                     {
-                        Nome = t["nome"]!.ToString(),
-                        QtdString = $"×{t["qtd"]}",
-                        FatString = FormatBRL((long)t["faturamento_centavos"]!)
-                    });
+                        tops.Add(new RedeTopView
+                        {
+                            Nome = t["nome"]?.ToString() ?? "Desconhecido",
+                            QtdString = $"×{(t["qtd"] ?? 0)}",
+                            FatString = FormatBRL((long?)t["faturamento_centavos"] ?? 0)
+                        });
+                    }
                 }
                 RedeTopList.ItemsSource = tops;
             }

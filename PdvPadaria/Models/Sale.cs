@@ -19,6 +19,7 @@ namespace PdvPadaria.Models
         public int? ReceivedAmount { get; set; } // Em centavos (dinheiro)
         public int? ChangeAmount { get; set; } // Em centavos (dinheiro)
         public string? Notes { get; set; }
+        public string? ExternalTxId { get; set; }
         
         // Controle de Sincronização
         public bool IsSynced { get; set; } = false;

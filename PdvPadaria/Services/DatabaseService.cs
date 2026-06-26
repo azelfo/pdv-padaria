@@ -86,33 +86,7 @@ namespace PdvPadaria.Services
                     });
                 }
 
-                // Seed do Produto Pão Francês Quente (Legado)
-                var prodCount = await _database.Table<Product>().CountAsync();
-                if (prodCount == 0)
-                {
-                    await _database.InsertAsync(new Product
-                    {
-                        Id = "prod-pao-frances",
-                        Name = "Pão Francês Quente",
-                        Barcode = "100000000001",
-                        PriceSale = 50,
-                        PriceCost = 15,
-                        Type = "PAO_FRANCES",
-                        UnitMeasure = "UN",
-                        CategoryId = "cat-producao-propria",
-                        TenantId = tenantId,
-                        LocalStockQuantity = 0,
-                        Active = false // Desativado
-                    });
-                }
 
-                // Migração / Seed garantido para Pão Carioca e Pão Massa Fina
-                var oldFrench = await _database.Table<Product>().Where(p => p.Id == "prod-pao-frances").FirstOrDefaultAsync();
-                if (oldFrench != null && oldFrench.Active)
-                {
-                    oldFrench.Active = false;
-                    await _database.UpdateAsync(oldFrench);
-                }
 
                 var paoCarioca = await _database.Table<Product>().Where(p => p.Id == "prod-pao-carioca").FirstOrDefaultAsync();
                 if (paoCarioca == null)
