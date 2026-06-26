@@ -4,7 +4,7 @@
     {
       "name": "painel-web",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8099", "--directory", "painel-web"],
+      "runtimeArgs": ["-m", "http.server", "8099", "--directory", "docs"],
       "port": 8099
     }
   ]
