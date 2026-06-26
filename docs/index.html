@@ -173,6 +173,62 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
   font-size:16px;font-weight:700;color:var(--accent);min-height:44px;
 }
 
+/* -------- PERÍODO PERSONALIZADO -------- */
+.custom-range{
+  background:var(--card);border:1px solid var(--line);
+  border-radius:12px;padding:14px;margin-bottom:14px;
+}
+.custom-range label{margin-top:0}
+
+/* -------- VENDAS -------- */
+.venda-resumo{
+  background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+}
+.venda-resumo .vr-fat{font-size:20px;font-weight:700;color:var(--accent)}
+.venda-resumo .vr-l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.venda-row{
+  display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:14px 2px;border-bottom:1px solid var(--line);cursor:pointer;
+}
+.venda-row:last-child{border-bottom:none}
+.venda-row:active{background:var(--card2)}
+.venda-hora{font-weight:600;font-size:15px}
+.venda-meta{font-size:12px;color:var(--muted);margin-top:3px}
+.venda-tot{font-size:16px;font-weight:700;white-space:nowrap;text-align:right}
+.venda-chevron{color:var(--muted);font-size:18px;margin-left:4px}
+.badge-status{display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;margin-left:6px;text-transform:uppercase;letter-spacing:.3px}
+.badge-status.aprovado{background:rgba(34,197,94,.15);color:#86efac}
+.badge-status.cancelado{background:rgba(239,68,68,.15);color:var(--red-soft)}
+.badge-status.pendente{background:rgba(245,158,11,.15);color:var(--accent)}
+
+/* -------- MODAL -------- */
+.modal-overlay{
+  position:fixed;inset:0;z-index:50;
+  background:rgba(0,0,0,.6);
+  display:flex;align-items:flex-end;justify-content:center;
+  padding:0;
+}
+@media(min-width:600px){.modal-overlay{align-items:center;padding:16px}}
+.modal-card{
+  background:var(--card);width:100%;max-width:520px;
+  border:1px solid var(--line);border-radius:16px 16px 0 0;
+  padding:18px;padding-bottom:calc(18px + var(--sb));
+  max-height:88vh;overflow-y:auto;
+}
+@media(min-width:600px){.modal-card{border-radius:16px;padding-bottom:18px}}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.modal-title{font-size:17px;font-weight:700}
+.modal-close{background:var(--card2);border:1px solid var(--line);color:var(--text);width:36px;height:36px;border-radius:10px;font-size:16px}
+.md-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;font-size:14px}
+.md-row .k{color:var(--muted)}
+.md-sec{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px}
+.md-item{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.md-item:last-child{border-bottom:none}
+.md-item .qi{color:var(--muted);font-size:12px;margin-top:2px}
+.md-total{display:flex;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:18px;font-weight:700}
+.md-total .accent{color:var(--accent)}
+
 /* -------- SPINNER -------- */
 .spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -208,10 +264,18 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
 
     <!-- ABA: DASHBOARD -->
     <div id="tab-dashboard" class="tab-pane on">
-      <div class="periods">
+      <div class="periods" id="dashPeriods">
         <button data-d="0" class="on">Hoje</button>
         <button data-d="7">7 dias</button>
         <button data-d="30">30 dias</button>
+        <button data-d="custom">📅</button>
+      </div>
+      <div id="dashCustom" class="custom-range hidden">
+        <label>De</label>
+        <input id="dashDe" type="datetime-local" />
+        <label>Até</label>
+        <input id="dashAte" type="datetime-local" />
+        <button class="btn-primary" id="dashAplicar" style="margin-top:12px">Aplicar período</button>
       </div>
 
       <div class="totais">
@@ -257,11 +321,44 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
       <div id="estqOk" class="ok hidden"></div>
     </div>
 
+    <!-- ABA: VENDAS -->
+    <div id="tab-vendas" class="tab-pane">
+      <div class="estq-header">
+        <select id="vendaLoja"></select>
+        <button class="btn-sm" id="vendaReload">↻</button>
+      </div>
+
+      <div class="periods" id="vendaPeriods">
+        <button data-d="0" class="on">Hoje</button>
+        <button data-d="7">7 dias</button>
+        <button data-d="30">30 dias</button>
+        <button data-d="custom">📅</button>
+      </div>
+      <div id="vendaCustom" class="custom-range hidden">
+        <label>De</label>
+        <input id="vendaDe" type="datetime-local" />
+        <label>Até</label>
+        <input id="vendaAte" type="datetime-local" />
+        <button class="btn-primary" id="vendaAplicar" style="margin-top:12px">Aplicar período</button>
+      </div>
+
+      <div class="venda-resumo" id="vendaResumo"></div>
+
+      <div class="card" id="vendaLista">
+        <div class="muted" style="padding:8px 0">Carregando...</div>
+      </div>
+
+      <div id="vendaErr" class="err hidden"></div>
+    </div>
+
   </div>
 
   <nav class="bottom-tabs">
     <button class="tab-btn on" data-tab="dashboard">
       <span class="tab-icon">📊</span>Dashboard
+    </button>
+    <button class="tab-btn" data-tab="vendas">
+      <span class="tab-icon">🧾</span>Vendas
     </button>
     <button class="tab-btn" data-tab="estoque">
       <span class="tab-icon">📦</span>Estoque
@@ -270,13 +367,26 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
 
 </div>
 
+<!-- ===== MODAL: DETALHE DA VENDA ===== -->
+<div id="vendaModal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-title">Detalhe da venda</div>
+      <button class="modal-close" id="vendaModalClose">✕</button>
+    </div>
+    <div id="vendaModalBody"></div>
+  </div>
+</div>
+
 <script>
 const SUPABASE_URL = "https://aezwtbzyremthqdkldzl.supabase.co";
 const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlend0Ynp5cmVtdGhxZGtsZHpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0NDI4NjEsImV4cCI6MjA5NzAxODg2MX0.kShlLQFGG8PeMpBPbB0Lfbu4bbB-pMdqNO-yOWej1us";
 
 let creds = { email:"", senha:"" };
-let periodoDias = 0;
 let lojasList = [];
+// Estado de período por aba: dias = 0|7|30|'custom'; de/ate só usados no custom (datetime-local).
+let dashPeriodo  = { dias:0, de:null, ate:null };
+let vendaPeriodo = { dias:0, de:null, ate:null };
 
 const $ = id => document.getElementById(id);
 const brl = c => (c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -290,17 +400,25 @@ function pad(n){return String(n).padStart(2,'0')}
 function fmtLocal(d){
   return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
 }
-function periodo(){
+// Calcula {de, ate} (strings 'YYYY-MM-DDTHH:MM:SS') a partir do estado de período.
+function calcPeriodo(st){
+  if(st.dias==='custom'){
+    if(!st.de || !st.ate) return null;
+    // datetime-local vem como 'YYYY-MM-DDTHH:MM'; completa segundos.
+    return { de: st.de+':00', ate: st.ate+':59' };
+  }
   const ate = new Date(), de = new Date();
-  if(periodoDias===0){ de.setHours(0,0,0,0); }
-  else { de.setDate(de.getDate()-periodoDias); de.setHours(0,0,0,0); }
+  const d = parseInt(st.dias,10)||0;
+  if(d===0){ de.setHours(0,0,0,0); }
+  else { de.setDate(de.getDate()-d); de.setHours(0,0,0,0); }
   const fim = new Date(ate); fim.setHours(23,59,59,999);
   return { de: fmtLocal(de), ate: fmtLocal(fim) };
 }
 
 // ---- Dashboard ----
 async function buscar(){
-  const p = periodo();
+  const p = calcPeriodo(dashPeriodo);
+  if(!p) throw new Error("Selecione as datas De e Até.");
   const data = await rpc('get_dashboard_rede', { p_email:creds.email, p_password:creds.senha, p_from:p.de, p_to:p.ate });
   if(data.error){ throw new Error(data.error==='invalid_credentials'?"E-mail ou senha inválidos":data.error==='forbidden'?"Sem acesso ao painel":data.error); }
   return data;
@@ -512,6 +630,153 @@ $('sairBtn').onclick = ()=>{
   $('loginWrap').classList.remove('hidden');
 };
 
+// ---- Vendas: helpers ----
+function metodoLabel(m){
+  return ({PIX:'PIX', DINHEIRO:'Dinheiro', CARTAO_DEBITO:'Cartão Débito', CARTAO_CREDITO:'Cartão Crédito'})[m] || m || '—';
+}
+function statusClass(s){
+  s=(s||'').toUpperCase();
+  if(s==='APROVADO') return 'aprovado';
+  if(s==='CANCELADO') return 'cancelado';
+  return 'pendente';
+}
+function statusLabel(s){
+  s=(s||'').toUpperCase();
+  return ({APROVADO:'Aprovado', CANCELADO:'Cancelado', PENDENTE:'Pendente', NEGADO:'Negado'})[s] || s;
+}
+function fmtHoraData(iso){
+  const d=new Date(iso);
+  if(isNaN(d)) return iso;
+  const hoje=new Date(); hoje.setHours(0,0,0,0);
+  const dia=new Date(d); dia.setHours(0,0,0,0);
+  const hora=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  if(dia.getTime()===hoje.getTime()) return hora;
+  return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+hora;
+}
+
+// ---- Vendas: seletor de loja ----
+function preencherSeletorVendaLojas(){
+  const sel=$('vendaLoja');
+  const atual=sel.value;
+  sel.innerHTML='<option value="">Todas as lojas</option>'+
+    lojasList.map(l=>`<option value="${l.storeId}">${l.nome}</option>`).join('');
+  if(atual) sel.value=atual;
+}
+
+// ---- Vendas: carregar lista ----
+async function carregarVendas(){
+  const p=calcPeriodo(vendaPeriodo);
+  $('vendaErr').classList.add('hidden');
+  if(!p){ $('vendaErr').textContent="Selecione as datas De e Até."; $('vendaErr').classList.remove('hidden'); return; }
+
+  $('vendaLista').innerHTML='<span class="spinner"></span><span class="muted">Carregando...</span>';
+  $('vendaResumo').innerHTML='';
+
+  const storeId=$('vendaLoja').value||null;
+  const data=await rpc('get_vendas_rede',{
+    p_email:creds.email, p_password:creds.senha,
+    p_from:p.de, p_to:p.ate, p_store_id:storeId, p_payment:'TODOS'
+  });
+
+  if(data.error){
+    $('vendaLista').innerHTML='';
+    $('vendaErr').textContent=data.error==='invalid_credentials'?"Sessão expirada, faça login novamente.":data.error;
+    $('vendaErr').classList.remove('hidden');
+    return;
+  }
+
+  const vendas=data.vendas||[];
+  window._vendas=vendas;
+
+  // Resumo: total aprovado + qtd
+  const aprovadas=vendas.filter(v=>(v.status||'').toUpperCase()==='APROVADO');
+  const totFat=aprovadas.reduce((s,v)=>s+(v.total_centavos||0),0);
+  $('vendaResumo').innerHTML=`
+    <div><div class="vr-fat">${brl(totFat)}</div><div class="vr-l">Faturamento aprovado</div></div>
+    <div style="text-align:right"><div class="vr-fat">${aprovadas.length}</div><div class="vr-l">Vendas</div></div>`;
+
+  if(!vendas.length){
+    $('vendaLista').innerHTML='<div class="muted" style="padding:8px 0">Nenhuma venda no período.</div>';
+    return;
+  }
+
+  const mostrarLoja=!storeId;
+  $('vendaLista').innerHTML=vendas.map((v,i)=>`
+    <div class="venda-row" onclick="abrirVendaDetalhe('${v.id}')">
+      <div>
+        <div class="venda-hora">${fmtHoraData(v.data)}<span class="badge-status ${statusClass(v.status)}">${statusLabel(v.status)}</span></div>
+        <div class="venda-meta">${metodoLabel(v.metodo)} · ${(+v.itens||0)} item(ns)${mostrarLoja&&v.loja?` · ${v.loja}`:''}</div>
+      </div>
+      <div style="display:flex;align-items:center">
+        <div class="venda-tot">${brl(v.total_centavos)}</div>
+        <span class="venda-chevron">›</span>
+      </div>
+    </div>`).join('');
+}
+
+// ---- Vendas: detalhe (modal) ----
+async function abrirVendaDetalhe(saleId){
+  $('vendaModal').classList.remove('hidden');
+  $('vendaModalBody').innerHTML='<span class="spinner"></span><span class="muted">Carregando...</span>';
+
+  const d=await rpc('get_venda_detalhe',{ p_email:creds.email, p_password:creds.senha, p_sale_id:saleId });
+
+  if(d.error){
+    $('vendaModalBody').innerHTML=`<div class="err">${d.error==='not_found'?'Venda não encontrada.':d.error==='invalid_credentials'?'Sessão expirada.':d.error}</div>`;
+    return;
+  }
+
+  const itens=(d.itens||[]).map(it=>`
+    <div class="md-item">
+      <div>
+        <div>${it.nome}</div>
+        <div class="qi">${(+it.quantidade||0)} × ${brl(it.preco_unit_centavos)}</div>
+      </div>
+      <div style="font-weight:600">${brl(it.subtotal_centavos)}</div>
+    </div>`).join('');
+
+  const temDesconto=(d.desconto_centavos||0)>0;
+  const ehDinheiro=(d.metodo||'')==='DINHEIRO' && d.recebido_centavos!=null;
+
+  $('vendaModalBody').innerHTML=`
+    <div class="md-row"><span class="k">Data</span><span>${new Date(d.data).toLocaleString('pt-BR')}</span></div>
+    ${d.loja?`<div class="md-row"><span class="k">Loja</span><span>${d.loja}</span></div>`:''}
+    <div class="md-row"><span class="k">Pagamento</span><span>${metodoLabel(d.metodo)}</span></div>
+    <div class="md-row"><span class="k">Status</span><span><span class="badge-status ${statusClass(d.status)}">${statusLabel(d.status)}</span></span></div>
+
+    <div class="md-sec">Itens</div>
+    ${itens||'<div class="muted">Sem itens.</div>'}
+
+    ${temDesconto?`<div class="md-row" style="margin-top:10px"><span class="k">Subtotal</span><span>${brl(d.subtotal_centavos)}</span></div>
+    <div class="md-row"><span class="k">Desconto</span><span>− ${brl(d.desconto_centavos)}</span></div>`:''}
+
+    <div class="md-total"><span>Total</span><span class="accent">${brl(d.total_centavos)}</span></div>
+
+    ${ehDinheiro?`<div class="md-row" style="margin-top:8px"><span class="k">Recebido</span><span>${brl(d.recebido_centavos)}</span></div>
+    <div class="md-row"><span class="k">Troco</span><span>${brl(d.troco_centavos||0)}</span></div>`:''}
+  `;
+}
+function fecharVendaModal(){ $('vendaModal').classList.add('hidden'); }
+
+// ---- Período: wiring genérico por aba ----
+function wirePeriods(periodsId, customId, state, onApply){
+  document.querySelectorAll('#'+periodsId+' button').forEach(b=>{
+    b.onclick=()=>{
+      document.querySelectorAll('#'+periodsId+' button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+      const d=b.dataset.d;
+      if(d==='custom'){
+        $(customId).classList.remove('hidden');
+        state.dias='custom';
+        return; // espera o usuário clicar Aplicar
+      }
+      $(customId).classList.add('hidden');
+      state.dias=parseInt(d,10);
+      onApply();
+    };
+  });
+}
+
 // ---- Tabs ----
 document.querySelectorAll('.tab-btn').forEach(btn=>{
   btn.onclick = ()=>{
@@ -520,18 +785,34 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     btn.classList.add('on');
     $('tab-'+btn.dataset.tab).classList.add('on');
     if(btn.dataset.tab==='estoque' && lojasList.length) preencherSeletorLojas();
+    if(btn.dataset.tab==='vendas'){
+      preencherSeletorVendaLojas();
+      carregarVendas();
+    }
   };
 });
 
-// ---- Período ----
-document.querySelectorAll('.periods button').forEach(b=>{
-  b.onclick = ()=>{
-    document.querySelectorAll('.periods button').forEach(x=>x.classList.remove('on'));
-    b.classList.add('on');
-    periodoDias = parseInt(b.dataset.d,10);
-    carregar();
-  };
-});
+// ---- Período: Dashboard ----
+wirePeriods('dashPeriods','dashCustom', dashPeriodo, carregar);
+$('dashAplicar').onclick = ()=>{
+  dashPeriodo.dias='custom';
+  dashPeriodo.de=$('dashDe').value;
+  dashPeriodo.ate=$('dashAte').value;
+  carregar();
+};
+
+// ---- Período: Vendas ----
+wirePeriods('vendaPeriods','vendaCustom', vendaPeriodo, carregarVendas);
+$('vendaAplicar').onclick = ()=>{
+  vendaPeriodo.dias='custom';
+  vendaPeriodo.de=$('vendaDe').value;
+  vendaPeriodo.ate=$('vendaAte').value;
+  carregarVendas();
+};
+$('vendaLoja').onchange = carregarVendas;
+$('vendaReload').onclick = carregarVendas;
+$('vendaModalClose').onclick = fecharVendaModal;
+$('vendaModal').onclick = (e)=>{ if(e.target===$('vendaModal')) fecharVendaModal(); };
 
 // ---- Seletor de loja (Estoque) ----
 $('estqLoja').onchange = carregarEstoque;

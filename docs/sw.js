@@ -1,4 +1,4 @@
-const CACHE = 'padaria-v6';
+const CACHE = 'padaria-v7';
 const CORE = ['./', './index.html', './manifest.json', './logo.png'];
 
 self.addEventListener('install', e => {
