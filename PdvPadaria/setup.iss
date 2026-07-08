@@ -4,7 +4,7 @@
 [Setup]
 AppId={{C6F2A3F4-5987-45CC-AB1B-7AA8D4D4A994}
 AppName=PDV - Padaria Venâncio
-AppVersion=1.0.7
+AppVersion=1.0.8
 AppPublisher=Padaria Venâncio
 AppPublisherURL=https://www.padariavenancio.com.br
 DefaultDirName={autopf}\PDV Padaria Venancio
@@ -18,6 +18,10 @@ WizardStyle=modern
 OutputBaseFilename=Setup_PadariaVenancio
 ; Permite instalação administrativa ou por usuário comum
 PrivilegesRequired=admin
+; Auto-update (UpdateService.cs): fecha o PDV se estiver aberto ao sobrescrever os arquivos
+; (defesa extra — o próprio app já se fecha sozinho antes de iniciar o instalador silencioso).
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -36,5 +40,15 @@ Name: "{group}\PDV - Padaria Venâncio"; Filename: "{app}\PdvPadaria.exe"
 Name: "{autodesktop}\PDV - Padaria Venâncio"; Filename: "{app}\PdvPadaria.exe"
 
 [Run]
-; Opção para iniciar o PDV automaticamente após a conclusão da instalação
+; Opção para iniciar o PDV automaticamente após a conclusão da instalação (instalação manual,
+; com wizard visível — o operador vê a caixa de seleção na tela final).
 Filename: "{app}\PdvPadaria.exe"; Description: "{cm:LaunchProgram,PDV - Padaria Venâncio}"; Flags: nowait postinstall skipifsilent
+; Auto-update silencioso (UpdateService.cs chama Setup com /VERYSILENT): sem wizard, então a
+; entrada acima nunca roda (skipifsilent). Esta reabre o PDV sozinho ao final da atualização.
+Filename: "{app}\PdvPadaria.exe"; Flags: nowait; Check: ShouldRelaunchSilently
+
+[Code]
+function ShouldRelaunchSilently(): Boolean;
+begin
+  Result := WizardSilent();
+end;

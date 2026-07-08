@@ -265,6 +265,28 @@ namespace PdvPadaria
 
             // Roda a primeira sincronização assim que abre
             await RunSincronizacaoSilenciosa();
+
+            // Checagem de atualização em background — não atrasa a abertura do caixa.
+            _ = CheckForUpdateAsync();
+        }
+
+        // Verifica se há versão nova (docs/version.json no GitHub) e oferece atualizar.
+        // Nunca interrompe o uso do caixa: se offline ou sem update, não faz nada.
+        private async Task CheckForUpdateAsync()
+        {
+            var info = await Services.UpdateService.CheckForUpdateAsync();
+            if (info == null) return;
+
+            var msg = $"Nova versão {info.Version} disponível.\n\n{info.Notes}\n\nAtualizar agora? O programa fecha e reabre sozinho em instantes.";
+            if (MessageBox.Show(msg, "Atualização disponível", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
+                return;
+
+            bool started = await Services.UpdateService.DownloadAndInstallAsync(info.Url);
+            if (!started)
+            {
+                MessageBox.Show("Não foi possível baixar a atualização agora. Tente novamente mais tarde.",
+                    "Atualização", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         // Navegação Lateral

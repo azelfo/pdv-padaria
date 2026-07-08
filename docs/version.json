@@ -1,0 +1,5 @@
+{
+  "version": "1.0.8",
+  "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
+  "notes": "Correcao: edicao de produto agora sincroniza com a nuvem (antes o preco voltava ao antigo). Correcao: novo produto atualiza a tela na hora. Novidade: atualizacao automatica do sistema."
+}
