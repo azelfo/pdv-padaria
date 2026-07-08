@@ -2555,7 +2555,11 @@ namespace PdvPadaria
                     formWindow.Close();
                     MessageBox.Show($"Produto \"{nome}\" cadastrado e disponível em todas as lojas.\nSincronizando para esta loja...", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
                     await RunSincronizacaoSilenciosa();
+                    // Atualiza a lista visível, seja o Modo Cadastro Local, seja uma loja remota —
+                    // antes só recarregava no modo local, então criar produto vendo o estoque de
+                    // outra loja "sumia" da tela (RPC criava certo, só a UI não atualizava).
                     if (string.IsNullOrEmpty(_stockRemoteStoreId)) LoadStock(SearchStockBox.Text.Trim());
+                    else _ = LoadRemoteStock(_stockRemoteStoreId);
                 }
                 catch (Exception ex)
                 {
@@ -2568,14 +2572,34 @@ namespace PdvPadaria
             formWindow.ShowDialog();
         }
 
-        private async void OpenProductFormWindow(Product? productToEdit)
+        // Edição de produto EXISTENTE: propaga para a NUVEM via atualizar_produto (mesmo padrão
+        // de criar_produto/excluir_produto), depois aplica local e sincroniza. Antes esta função
+        // só gravava no SQLite local — o próximo pull de sync baixava o preço antigo da nuvem e
+        // SOBRESCREVIA a edição (bug: "diz sucesso mas volta pro preço antigo"). Único chamador é
+        // EditProductButton_Click, sempre com productToEdit != null (o antigo branch de criação
+        // aqui virou código morto desde que "Novo Produto" passou a usar OpenNovoProdutoNuvem).
+        private async void OpenProductFormWindow(Product productToEdit)
         {
-            bool isEdit = productToEdit != null;
+            if (string.IsNullOrEmpty(_donoEmail) || string.IsNullOrEmpty(_donoPassword))
+            {
+                MessageBox.Show("Para editar um produto da rede, faça login ONLINE como dono.",
+                    "Editar produto", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            string baseUrl = EnvService.Get("SUPABASE_URL").TrimEnd('/');
+            string anon = EnvService.Get("SUPABASE_ANON_KEY");
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(anon))
+            {
+                MessageBox.Show("Configuração da nuvem ausente no .env.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
             var formWindow = new Window
             {
-                Title = isEdit ? $"Editar Produto - {productToEdit!.Name}" : "Novo Produto",
+                Title = $"Editar Produto - {productToEdit.Name}",
                 Width = 450,
-                Height = 580,
+                Height = 520,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Owner = this,
                 WindowStyle = WindowStyle.ToolWindow,
@@ -2597,63 +2621,30 @@ namespace PdvPadaria
 
             var txtNome = createTextBox();
             var txtBarcode = createTextBox();
-            var txtCategoria = createTextBox();
-            
-            var cmbTipo = new ComboBox { SelectedIndex = 0, Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
-            cmbTipo.Items.Add("NORMAL");
-            cmbTipo.Items.Add("PAO_FRANCES");
-            cmbTipo.Items.Add("SALGADO");
-            cmbTipo.Items.Add("BOLO");
-
+            var cmbCategoria = new ComboBox { Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
             var cmbUnidade = new ComboBox { SelectedIndex = 0, Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
             cmbUnidade.Items.Add("UN");
             cmbUnidade.Items.Add("KG");
-
             var txtPrecoVenda = createTextBox();
             var txtPrecoCusto = createTextBox();
             var txtMinStock = createTextBox();
-            var txtEstoqueInicial = createTextBox();
 
-            if (isEdit)
-            {
-                txtNome.Text = productToEdit!.Name;
-                txtBarcode.Text = productToEdit.Barcode;
-                
-                try
-                {
-                    var conn = App.Database.GetConnection();
-                    var category = await conn.FindAsync<Category>(productToEdit.CategoryId);
-                    txtCategoria.Text = category?.Name ?? "Geral";
-                }
-                catch { txtCategoria.Text = "Geral"; }
-
-                cmbTipo.SelectedItem = productToEdit.Type;
-                cmbUnidade.SelectedItem = productToEdit.UnitMeasure;
-                txtPrecoVenda.Text = (productToEdit.PriceSale / 100.0).ToString("F2");
-                txtPrecoCusto.Text = (productToEdit.PriceCost / 100.0).ToString("F2");
-                txtMinStock.Text = productToEdit.MinStock.ToString();
-                txtEstoqueInicial.Text = productToEdit.LocalStockQuantity.ToString();
-                txtEstoqueInicial.IsEnabled = false;
-            }
-            else
-            {
-                txtPrecoVenda.Text = "0,00";
-                txtPrecoCusto.Text = "0,00";
-                txtMinStock.Text = "5";
-                txtEstoqueInicial.Text = "0";
-            }
+            txtNome.Text = productToEdit.Name;
+            txtBarcode.Text = productToEdit.Barcode;
+            cmbUnidade.SelectedItem = productToEdit.UnitMeasure;
+            txtPrecoVenda.Text = (productToEdit.PriceSale / 100.0).ToString("F2");
+            txtPrecoCusto.Text = (productToEdit.PriceCost / 100.0).ToString("F2");
+            txtMinStock.Text = productToEdit.MinStock.ToString();
 
             stack.Children.Add(createField("Nome do Produto", txtNome));
             stack.Children.Add(createField("Código de Barras", txtBarcode));
-            stack.Children.Add(createField("Categoria", txtCategoria));
-            stack.Children.Add(createField("Tipo de Produto", cmbTipo));
+            stack.Children.Add(createField("Categoria", cmbCategoria));
             stack.Children.Add(createField("Unidade de Medida", cmbUnidade));
 
-            var pricesGrid = new Grid { Margin = new Thickness(0,0,0,12) };
+            var pricesGrid = new Grid { Margin = new Thickness(0, 0, 0, 12) };
             pricesGrid.ColumnDefinitions.Add(new ColumnDefinition());
             pricesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
             pricesGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            
             var costPanel = createField("Preço Custo (R$)", txtPrecoCusto);
             var salePanel = createField("Preço Venda (R$)", txtPrecoVenda);
             pricesGrid.Children.Add(costPanel);
@@ -2662,50 +2653,79 @@ namespace PdvPadaria
             Grid.SetColumn(salePanel, 2);
             stack.Children.Add(pricesGrid);
 
-            var stockGrid = new Grid { Margin = new Thickness(0,0,0,15) };
-            stockGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            stockGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
-            stockGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            
-            var minStockPanel = createField("Estoque Mínimo", txtMinStock);
-            var initStockPanel = createField("Estoque Inicial", txtEstoqueInicial);
-            stockGrid.Children.Add(minStockPanel);
-            Grid.SetColumn(minStockPanel, 0);
-            stockGrid.Children.Add(initStockPanel);
-            Grid.SetColumn(initStockPanel, 2);
-            stack.Children.Add(stockGrid);
+            // Estoque Mínimo é campo LOCAL (alerta de baixo estoque desta máquina) — não é
+            // enviado à nuvem, igual sempre foi (o estoque em si é tratado à parte do cadastro).
+            stack.Children.Add(createField("Estoque Mínimo (local)", txtMinStock));
 
             var confirmBtn = new Button
             {
-                Content = isEdit ? "Salvar Alterações" : "Cadastrar Produto",
+                Content = "Salvar Alterações",
                 Padding = new Thickness(12),
                 Background = AppColors.Accent,
                 Foreground = AppColors.BgBase,
-                FontWeight = FontWeights.Bold
+                FontWeight = FontWeights.Bold,
+                IsEnabled = false
             };
+            stack.Children.Add(confirmBtn);
+
+            var scroll = new ScrollViewer { Content = stack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            formWindow.Content = scroll;
+
+            // Carrega categorias da nuvem e pré-seleciona a atual do produto
+            try
+            {
+                var payloadCat = new { p_email = _donoEmail, p_password = _donoPassword };
+                using var reqCat = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/get_categorias");
+                reqCat.Content = new System.Net.Http.StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(payloadCat), Encoding.UTF8, "application/json");
+                reqCat.Headers.Add("apikey", anon);
+                reqCat.Headers.Add("Authorization", "Bearer " + anon);
+                var respCat = await _redeHttp.SendAsync(reqCat);
+                var jCat = Newtonsoft.Json.Linq.JObject.Parse(await respCat.Content.ReadAsStringAsync());
+                if (jCat["categorias"] is Newtonsoft.Json.Linq.JArray arr)
+                {
+                    foreach (var c in arr)
+                    {
+                        var item = new ComboBoxItem { Content = c["nome"]?.ToString() ?? "", Tag = c["id"]?.ToString() ?? "" };
+                        cmbCategoria.Items.Add(item);
+                        if ((c["id"]?.ToString() ?? "") == productToEdit.CategoryId) cmbCategoria.SelectedItem = item;
+                    }
+                }
+                if (cmbCategoria.SelectedItem == null && cmbCategoria.Items.Count > 0) cmbCategoria.SelectedIndex = 0;
+                confirmBtn.IsEnabled = cmbCategoria.Items.Count > 0;
+                if (cmbCategoria.Items.Count == 0)
+                    MessageBox.Show("Nenhuma categoria encontrada na nuvem.", "Editar produto", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Sem conexão com a nuvem para carregar as categorias.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                System.Diagnostics.Debug.WriteLine($"[get_categorias Error]: {ex.Message}");
+                formWindow.Close();
+                return;
+            }
 
             confirmBtn.Click += async (s, ev) =>
             {
                 var name = txtNome.Text.Trim();
                 var barcode = (txtBarcode?.Text ?? string.Empty).Trim();
-                var categoryName = txtCategoria.Text.Trim();
-                var tipo = cmbTipo.SelectedItem?.ToString() ?? "NORMAL";
                 var unidade = cmbUnidade.SelectedItem?.ToString() ?? "UN";
+                var catItem = cmbCategoria.SelectedItem as ComboBoxItem;
+                string catId = catItem?.Tag as string ?? "";
+                string catNome = catItem?.Content?.ToString() ?? "";
+                string tipo = catNome.ToLower().Contains("produ") ? "PRODUCAO" : "NORMAL";
 
                 if (string.IsNullOrEmpty(name))
                 {
                     MessageBox.Show("O nome do produto é obrigatório.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
-                if (string.IsNullOrEmpty(categoryName))
+                if (string.IsNullOrEmpty(catId))
                 {
-                    categoryName = "Geral";
+                    MessageBox.Show("Selecione uma categoria.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
                 }
-
                 if (!TryParseDouble(txtPrecoVenda.Text, out double priceSaleVal) || priceSaleVal < 0 ||
                     !TryParseDouble(txtPrecoCusto.Text, out double priceCostVal) || priceCostVal < 0 ||
-                    !TryParseDouble(txtMinStock.Text, out double minStockVal) || minStockVal < 0 ||
-                    !TryParseDouble(txtEstoqueInicial.Text, out double initialStockVal) || initialStockVal < 0)
+                    !TryParseDouble(txtMinStock.Text, out double minStockVal) || minStockVal < 0)
                 {
                     MessageBox.Show("Preencha valores numéricos válidos e não negativos.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
@@ -2714,116 +2734,69 @@ namespace PdvPadaria
                 int priceSaleCents = (int)Math.Round(priceSaleVal * 100);
                 int priceCostCents = (int)Math.Round(priceCostVal * 100);
 
+                confirmBtn.IsEnabled = false; confirmBtn.Content = "Salvando...";
                 try
                 {
+                    var payload = new
+                    {
+                        p_email = _donoEmail,
+                        p_password = _donoPassword,
+                        p_product_id = productToEdit.Id,
+                        p_nome = name,
+                        p_tipo = tipo,
+                        p_unidade = unidade,
+                        p_preco_venda = priceSaleCents,
+                        p_preco_custo = priceCostCents,
+                        p_categoria_id = catId,
+                        p_codigo_barras = string.IsNullOrEmpty(barcode) ? null : barcode
+                    };
+                    using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/atualizar_produto");
+                    req.Content = new System.Net.Http.StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                    req.Headers.Add("apikey", anon);
+                    req.Headers.Add("Authorization", "Bearer " + anon);
+                    var resp = await _redeHttp.SendAsync(req);
+                    var j = Newtonsoft.Json.Linq.JObject.Parse(await resp.Content.ReadAsStringAsync());
+                    if (j["error"] != null)
+                    {
+                        string err = j["error"]!.ToString();
+                        MessageBox.Show(err == "invalid_credentials" ? "Sessão do dono expirada, faça login online de novo." :
+                            err == "categoria_invalida" ? "Categoria inválida." :
+                            err == "not_found" ? "Produto não encontrado na nuvem." :
+                            err == "nome_obrigatorio" ? "Informe o nome do produto." : err,
+                            "Editar produto", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        confirmBtn.IsEnabled = true; confirmBtn.Content = "Salvar Alterações";
+                        return;
+                    }
+
+                    // Cloud confirmou: aplica localmente de imediato (mesmo padrão do Delete) —
+                    // não depende do próximo ciclo de sync para refletir na tela.
                     var conn = App.Database.GetConnection();
-
-                    if (!string.IsNullOrEmpty(barcode))
-                    {
-                        var dupQuery = conn.Table<Product>().Where(p => p.Barcode == barcode && p.Active);
-                        if (isEdit)
-                        {
-                            dupQuery = dupQuery.Where(p => p.Id != productToEdit!.Id);
-                        }
-                        var duplicate = await dupQuery.FirstOrDefaultAsync();
-                        if (duplicate != null)
-                        {
-                            MessageBox.Show("Já existe outro produto ativo cadastrado com este código de barras.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
-                            return;
-                        }
-                    }
-
-                    var category = await conn.Table<Category>().Where(c => c.Name == categoryName).FirstOrDefaultAsync();
-                    if (category == null)
-                    {
-                        category = new Category
-                        {
-                            Id = Guid.NewGuid().ToString(),
-                            Name = categoryName,
-                            TenantId = CurrentUser.TenantId
-                        };
-                        await conn.InsertAsync(category);
-                    }
-
-                    if (isEdit)
-                    {
-                        productToEdit!.Name = name;
-                        productToEdit.Barcode = string.IsNullOrEmpty(barcode) ? null : barcode;
-                        productToEdit.CategoryId = category.Id;
-                        productToEdit.Type = tipo;
-                        productToEdit.UnitMeasure = unidade;
-                        productToEdit.PriceSale = priceSaleCents;
-                        productToEdit.PriceCost = priceCostCents;
-                        productToEdit.MinStock = minStockVal;
-                        productToEdit.UpdatedAt = DateTime.Now;
-
-                        await conn.UpdateAsync(productToEdit);
-                        MessageBox.Show("Produto atualizado com sucesso!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
-                    }
-                    else
-                    {
-                        var newProd = new Product
-                        {
-                            Id = Guid.NewGuid().ToString(),
-                            Name = name,
-                            Barcode = string.IsNullOrEmpty(barcode) ? null : barcode,
-                            CategoryId = category.Id,
-                            Type = tipo,
-                            UnitMeasure = unidade,
-                            PriceSale = priceSaleCents,
-                            PriceCost = priceCostCents,
-                            MinStock = minStockVal,
-                            LocalStockQuantity = initialStockVal,
-                            Active = true,
-                            TenantId = CurrentUser.TenantId,
-                            CreatedAt = DateTime.Now,
-                            UpdatedAt = DateTime.Now
-                        };
-
-                        string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
-                        string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
-
-                        await App.Database.RunInTransactionAsync((tx) =>
-                        {
-                            tx.Insert(newProd);
-
-                            if (initialStockVal > 0)
-                            {
-                                var movement = new StockMovement
-                                {
-                                    Id = Guid.NewGuid().ToString(),
-                                    ProductId = newProd.Id,
-                                    StoreId = storeId,
-                                    UserId = CurrentUser.Id,
-                                    TenantId = tenantId,
-                                    Type = "ENTRADA",
-                                    Quantity = initialStockVal,
-                                    Reason = "REPOSICAO",
-                                    CreatedAt = DateTime.Now,
-                                    IsSynced = false
-                                };
-                                tx.Insert(movement);
-                            }
-                        });
-
-                        MessageBox.Show("Produto cadastrado com sucesso!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
-                    }
+                    productToEdit.Name = name;
+                    productToEdit.Barcode = string.IsNullOrEmpty(barcode) ? null : barcode;
+                    productToEdit.CategoryId = catId;
+                    productToEdit.Type = tipo;
+                    productToEdit.UnitMeasure = unidade;
+                    productToEdit.PriceSale = priceSaleCents;
+                    productToEdit.PriceCost = priceCostCents;
+                    productToEdit.MinStock = minStockVal;
+                    productToEdit.UpdatedAt = DateTime.Now;
+                    await conn.UpdateAsync(productToEdit);
 
                     formWindow.Close();
-                    LoadStock(SearchStockBox.Text.Trim());
+                    MessageBox.Show("Produto atualizado com sucesso!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                    if (string.IsNullOrEmpty(_stockRemoteStoreId)) LoadStock(SearchStockBox.Text.Trim());
+                    else _ = LoadRemoteStock(_stockRemoteStoreId);
 
                     _ = Task.Run(async () => await RunSincronizacaoSilenciosa());
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"Erro ao salvar produto: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show("Sem conexão com a nuvem para salvar as alterações.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    System.Diagnostics.Debug.WriteLine($"[atualizar_produto Error]: {ex.Message}");
+                    confirmBtn.IsEnabled = true; confirmBtn.Content = "Salvar Alterações";
                 }
             };
-
-            stack.Children.Add(confirmBtn);
-
-            var scroll = new ScrollViewer { Content = stack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-            formWindow.Content = scroll;
 
             txtNome.Focus();
             formWindow.ShowDialog();

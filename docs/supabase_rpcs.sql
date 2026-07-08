@@ -442,3 +442,61 @@ BEGIN
   ));
 END;
 $$;
+
+
+-- ----------------------------------------------------------------
+-- RPC 8: atualizar_produto
+-- Edita um produto existente do catalogo (nuvem). Usado pelo PDV
+-- (OpenProductFormWindow) para que a edicao propague a rede toda em
+-- vez de ficar so no SQLite local (bug: sync revertia a edicao local
+-- baixando o preco antigo da nuvem no proximo pull).
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION atualizar_produto(
+  p_email          TEXT,
+  p_password       TEXT,
+  p_product_id     TEXT,
+  p_nome           TEXT,
+  p_tipo           TEXT,
+  p_unidade        TEXT,
+  p_preco_venda    INT,
+  p_preco_custo    INT,
+  p_categoria_id   TEXT,
+  p_codigo_barras  TEXT DEFAULT NULL
+)
+RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_user_id TEXT; v_role TEXT; v_tenant_id TEXT; v_cat_ok BOOLEAN; v_prod_ok BOOLEAN;
+BEGIN
+  SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
+    FROM "User" WHERE email = p_email AND password = extensions.crypt(p_password, password) LIMIT 1;
+  IF v_user_id IS NULL THEN
+    SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
+      FROM "User" WHERE email = p_email AND password = p_password LIMIT 1;
+  END IF;
+  IF v_user_id IS NULL THEN RETURN json_build_object('error','invalid_credentials'); END IF;
+  IF v_role != 'DONO' THEN RETURN json_build_object('error','forbidden'); END IF;
+
+  IF p_nome IS NULL OR length(trim(p_nome)) = 0 THEN
+    RETURN json_build_object('error','nome_obrigatorio');
+  END IF;
+
+  SELECT EXISTS(SELECT 1 FROM "Product" WHERE id = p_product_id AND "tenantId" = v_tenant_id) INTO v_prod_ok;
+  IF NOT v_prod_ok THEN RETURN json_build_object('error','not_found'); END IF;
+
+  SELECT EXISTS(SELECT 1 FROM "Category" WHERE id = p_categoria_id AND "tenantId" = v_tenant_id) INTO v_cat_ok;
+  IF NOT v_cat_ok THEN RETURN json_build_object('error','categoria_invalida'); END IF;
+
+  UPDATE "Product"
+     SET name = trim(p_nome),
+         barcode = COALESCE(NULLIF(trim(p_codigo_barras), ''), barcode),
+         "priceSale" = COALESCE(p_preco_venda, "priceSale"),
+         "priceCost" = COALESCE(p_preco_custo, "priceCost"),
+         type = COALESCE(NULLIF(p_tipo,''), type),
+         "unitMeasure" = COALESCE(NULLIF(p_unidade,''), "unitMeasure"),
+         "categoryId" = p_categoria_id,
+         "updatedAt" = NOW()
+   WHERE id = p_product_id AND "tenantId" = v_tenant_id;
+
+  RETURN json_build_object('success', true);
+END;
+$$;

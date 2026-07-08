@@ -51,3 +51,4 @@ next-env.d.ts
 
 # Pasta de trabalho temporaria (contem segredos: tokens, anon key)
 scratch/
+graphify-out/
