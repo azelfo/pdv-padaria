@@ -688,14 +688,20 @@ async function salvarNovoProduto(){
     $('prodErr').textContent =
       res.error==='invalid_credentials' ? "Sessão expirada, faça login novamente." :
       res.error==='nome_obrigatorio' ? "Informe o nome do produto." :
-      res.error==='categoria_invalida' ? "Categoria inválida." : res.error;
+      res.error==='categoria_invalida' ? "Categoria inválida." :
+      res.error==='barcode_obrigatorio' ? "Informe o código de barras do produto." :
+      res.error==='barcode_duplicado' ? "Já existe um produto ATIVO com este código de barras." : res.error;
     $('prodErr').classList.remove('hidden');
     return;
   }
 
   fecharNovoProduto();
   await carregarEstoque(); // recarrega a lista (produto já aparece na loja atual)
-  $('estqOk').textContent = `✓ "${nome}" cadastrado e disponível em todas as lojas`;
+  // Se o código de barras já pertencia a um produto EXCLUÍDO antes, a RPC reativa
+  // a linha existente (com os dados novos) em vez de criar uma duplicata.
+  $('estqOk').textContent = res.reativado
+    ? `✓ "${nome}" já existia (estava excluído) e foi reativado`
+    : `✓ "${nome}" cadastrado e disponível em todas as lojas`;
   $('estqOk').classList.remove('hidden');
   setTimeout(()=>$('estqOk').classList.add('hidden'), 4000);
 }

@@ -361,8 +361,15 @@ $$;
 -- ----------------------------------------------------------------
 -- RPC 6: criar_produto
 -- Cria um produto no catálogo do tenant (nuvem). Assim que criado, ele
--- aparece em TODAS as lojas (get_loja_estoque faz LEFT JOIN com saldo 0)
--- e o PDV o recebe no próximo sync. Preços em centavos (int).
+-- aparece em TODAS as lojas (StoreProduct inserido para cada loja ativa
+-- com saldo 0) e o PDV o recebe no próximo sync. Preços em centavos (int).
+--
+-- Código de barras é OBRIGATÓRIO e, dentro do tenant:
+--   - já existe um produto ATIVO com este barcode -> erro barcode_duplicado.
+--   - já existe um produto INATIVO (excluído antes) com este barcode ->
+--     REATIVA essa linha com os dados novos em vez de criar duplicata
+--     (retorna 'reativado': true). Resolve "excluí sem querer, recriar".
+--   - não existe -> INSERT normal (retorna 'reativado': false).
 -- ----------------------------------------------------------------
 CREATE OR REPLACE FUNCTION criar_produto(
   p_email          TEXT,
@@ -378,6 +385,8 @@ CREATE OR REPLACE FUNCTION criar_produto(
 RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_user_id TEXT; v_role TEXT; v_tenant_id TEXT; v_cat_ok BOOLEAN; v_new_id TEXT;
+  v_barcode TEXT;
+  v_existing_id TEXT; v_existing_active BOOLEAN;
 BEGIN
   SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
     FROM "User"
@@ -394,8 +403,45 @@ BEGIN
     RETURN json_build_object('error','nome_obrigatorio');
   END IF;
 
+  v_barcode := NULLIF(trim(p_codigo_barras), '');
+  IF v_barcode IS NULL THEN
+    RETURN json_build_object('error','barcode_obrigatorio');
+  END IF;
+
   SELECT EXISTS(SELECT 1 FROM "Category" WHERE id = p_categoria_id AND "tenantId" = v_tenant_id) INTO v_cat_ok;
   IF NOT v_cat_ok THEN RETURN json_build_object('error','categoria_invalida'); END IF;
+
+  SELECT id, active INTO v_existing_id, v_existing_active
+    FROM "Product"
+   WHERE barcode = v_barcode AND "tenantId" = v_tenant_id
+   LIMIT 1;
+
+  IF v_existing_id IS NOT NULL AND v_existing_active THEN
+    RETURN json_build_object('error','barcode_duplicado');
+  END IF;
+
+  IF v_existing_id IS NOT NULL AND NOT v_existing_active THEN
+    UPDATE "Product"
+       SET name = trim(p_nome),
+           type = COALESCE(NULLIF(p_tipo,''),'NORMAL'),
+           "unitMeasure" = COALESCE(NULLIF(p_unidade,''),'UN'),
+           "priceSale" = COALESCE(p_preco_venda,0),
+           "priceCost" = COALESCE(p_preco_custo,0),
+           "categoryId" = p_categoria_id,
+           active = true,
+           "updatedAt" = NOW()
+     WHERE id = v_existing_id;
+
+    INSERT INTO "StoreProduct" (id, "productId", "storeId", quantity, "minStock", "updatedAt")
+    SELECT gen_random_uuid()::text, v_existing_id, st.id, 0, 0, NOW()
+    FROM "Store" st
+    WHERE st."tenantId" = v_tenant_id AND st.active = true
+      AND NOT EXISTS (
+        SELECT 1 FROM "StoreProduct" sp WHERE sp."productId" = v_existing_id AND sp."storeId" = st.id
+      );
+
+    RETURN json_build_object('success', true, 'productId', v_existing_id, 'reativado', true);
+  END IF;
 
   v_new_id := gen_random_uuid()::text;
 
@@ -403,12 +449,17 @@ BEGIN
     (id, name, barcode, "priceSale", "priceCost", type, "unitMeasure", active,
      "categoryId", "tenantId", "createdAt", "updatedAt")
   VALUES
-    (v_new_id, trim(p_nome), NULLIF(trim(COALESCE(p_codigo_barras,'')), ''),
+    (v_new_id, trim(p_nome), v_barcode,
      COALESCE(p_preco_venda,0), COALESCE(p_preco_custo,0),
      COALESCE(NULLIF(p_tipo,''),'NORMAL'), COALESCE(NULLIF(p_unidade,''),'UN'),
      true, p_categoria_id, v_tenant_id, NOW(), NOW());
 
-  RETURN json_build_object('success', true, 'productId', v_new_id);
+  INSERT INTO "StoreProduct" (id, "productId", "storeId", quantity, "minStock", "updatedAt")
+  SELECT gen_random_uuid()::text, v_new_id, st.id, 0, 0, NOW()
+  FROM "Store" st
+  WHERE st."tenantId" = v_tenant_id AND st.active = true;
+
+  RETURN json_build_object('success', true, 'productId', v_new_id, 'reativado', false);
 END;
 $$;
 

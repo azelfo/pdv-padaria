@@ -2568,14 +2568,23 @@ namespace PdvPadaria
                         MessageBox.Show(err == "invalid_credentials" ? "Sessão do dono expirada, faça login online de novo." :
                             err == "categoria_invalida" ? "Categoria inválida." :
                             err == "nome_obrigatorio" ? "Informe o nome do produto." :
-                            err == "barcode_obrigatorio" ? "Informe o código de barras do produto." : err,
+                            err == "barcode_obrigatorio" ? "Informe o código de barras do produto." :
+                            err == "barcode_duplicado" ? "Já existe um produto ATIVO com este código de barras." : err,
                             "Novo produto", MessageBoxButton.OK, MessageBoxImage.Warning);
                         confirmBtn.IsEnabled = true; confirmBtn.Content = "Cadastrar Produto";
                         return;
                     }
 
+                    // Quando um produto com este código de barras já existia mas estava INATIVO
+                    // (excluído antes), a RPC reativa a linha em vez de criar uma nova — evita
+                    // duplicata silenciosa e explica a diferença ao usuário.
+                    bool reativado = (bool?)j["reativado"] ?? false;
+                    string msgSucesso = reativado
+                        ? $"Produto \"{nome}\" já existia (estava excluído) e foi REATIVADO com os novos dados.\nSincronizando para esta loja..."
+                        : $"Produto \"{nome}\" cadastrado e disponível em todas as lojas.\nSincronizando para esta loja...";
+
                     formWindow.Close();
-                    MessageBox.Show($"Produto \"{nome}\" cadastrado e disponível em todas as lojas.\nSincronizando para esta loja...", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show(msgSucesso, "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
                     await RunSincronizacaoSilenciosa();
                     // Atualiza a lista visível, seja o Modo Cadastro Local, seja uma loja remota —
                     // antes só recarregava no modo local, então criar produto vendo o estoque de
