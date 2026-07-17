@@ -1,5 +1,5 @@
 {
-  "version": "1.0.9",
+  "version": "1.0.10",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "notes": "Correcao: cadastrar produto com codigo de barras de um produto ja excluido antes agora reativa ele (com dados novos) em vez de nao fazer nada. Bloqueia cadastro duplicado se ja existir produto ativo com o mesmo codigo de barras."
+  "notes": "Novidade: botao Gerar no cadastro de produto. Para coxinha, salgado, bolo e outros produtos sem codigo de barras de fabrica, o sistema cria um codigo proprio na hora, sem risco de repetir."
 }

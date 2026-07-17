@@ -551,3 +551,76 @@ BEGIN
   RETURN json_build_object('success', true);
 END;
 $$;
+
+
+-- ----------------------------------------------------------------
+-- RPC 9: gerar_codigo_interno  (+ sequencia e helper de checksum)
+-- Gera um codigo de barras para produtos SEM codigo de fabrica
+-- (coxinha, salgado, bolo). Usado pelo botao "Gerar" no cadastro de
+-- produto, no PDV e no painel web.
+--
+-- Formato: EAN-13 valido = '2' + sequencia(11 digitos) + digito verificador.
+-- O prefixo 2 e reservado pela GS1 para uso INTERNO da loja, entao nunca
+-- colide com produto de fabrica (que no Brasil comeca com 789/790). A
+-- sequencia garante que nunca repete entre lojas/cadastros simultaneos.
+-- Ex.: 2000000000015, 2000000000022, ...
+--
+-- criar_produto NAO muda: o botao so preenche o campo, e o cadastro segue
+-- com a mesma validacao de duplicidade que ja existia.
+-- ----------------------------------------------------------------
+CREATE SEQUENCE IF NOT EXISTS internal_barcode_seq START 1;
+
+CREATE OR REPLACE FUNCTION ean13_check_digit(p_12 TEXT)
+RETURNS INT LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  s INT := 0; i INT; d INT;
+BEGIN
+  IF p_12 IS NULL OR length(p_12) <> 12 OR p_12 !~ '^[0-9]{12}$' THEN
+    RAISE EXCEPTION 'ean13_check_digit espera exatamente 12 digitos, recebeu: %', p_12;
+  END IF;
+  FOR i IN 1..12 LOOP
+    d := substr(p_12, i, 1)::INT;
+    IF i % 2 = 1 THEN s := s + d; ELSE s := s + d * 3; END IF;
+  END LOOP;
+  RETURN (10 - (s % 10)) % 10;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION gerar_codigo_interno(
+  p_email    TEXT,
+  p_password TEXT
+)
+RETURNS JSON LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_user_id TEXT; v_role TEXT; v_tenant_id TEXT;
+  v_seq BIGINT; v_base TEXT; v_code TEXT; v_tries INT := 0;
+BEGIN
+  SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
+    FROM "User"
+   WHERE email = p_email AND password = extensions.crypt(p_password, password)
+   LIMIT 1;
+  IF v_user_id IS NULL THEN
+    SELECT id, role, "tenantId" INTO v_user_id, v_role, v_tenant_id
+      FROM "User" WHERE email = p_email AND password = p_password LIMIT 1;
+  END IF;
+  IF v_user_id IS NULL THEN RETURN json_build_object('error','invalid_credentials'); END IF;
+  IF v_role != 'DONO' THEN RETURN json_build_object('error','forbidden'); END IF;
+
+  -- A sequencia ja garante unicidade; o loop e paranoia contra um codigo '2...'
+  -- que alguem tenha digitado a mao.
+  LOOP
+    v_tries := v_tries + 1;
+    IF v_tries > 50 THEN
+      RETURN json_build_object('error','falha_gerar_codigo');
+    END IF;
+
+    v_seq  := nextval('internal_barcode_seq');
+    v_base := '2' || lpad(v_seq::text, 11, '0');
+    v_code := v_base || ean13_check_digit(v_base)::text;
+
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM "Product" WHERE barcode = v_code);
+  END LOOP;
+
+  RETURN json_build_object('success', true, 'codigo', v_code);
+END;
+$$;

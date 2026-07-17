@@ -2473,7 +2473,68 @@ namespace PdvPadaria
 
             stack.Children.Add(new TextBlock { Text = "O produto fica disponível em todas as lojas (saldo zero). Cada loja ajusta a quantidade depois.", Foreground = AppColors.TextMuted, FontSize = 11, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
             stack.Children.Add(createField("Nome do Produto", txtNome));
-            stack.Children.Add(createField("Código de Barras *", txtBarcode));
+
+            // Código de barras + botão "Gerar" para produtos SEM código de fábrica
+            // (coxinha, salgado, bolo). O código vem do servidor (gerar_codigo_interno):
+            // EAN-13 com prefixo 2, reservado pela GS1 para uso interno da loja — nunca
+            // colide com produto de fábrica (789/790) nem com outro gerado (sequência).
+            var barcodeGrid = new Grid();
+            barcodeGrid.ColumnDefinitions.Add(new ColumnDefinition());
+            barcodeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
+            barcodeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var btnGerarCodigo = new Button
+            {
+                Content = "Gerar",
+                Padding = new Thickness(12, 8, 12, 8),
+                Background = AppColors.Surface,
+                Foreground = AppColors.Accent,
+                BorderBrush = AppColors.BorderSoft,
+                BorderThickness = new Thickness(1),
+                ToolTip = "Gera um código interno para produto sem código de barras (coxinha, salgado, bolo)"
+            };
+            barcodeGrid.Children.Add(txtBarcode);
+            Grid.SetColumn(txtBarcode, 0);
+            barcodeGrid.Children.Add(btnGerarCodigo);
+            Grid.SetColumn(btnGerarCodigo, 2);
+            stack.Children.Add(createField("Código de Barras * (sem código? clique em Gerar)", barcodeGrid));
+
+            btnGerarCodigo.Click += async (s, ev) =>
+            {
+                btnGerarCodigo.IsEnabled = false;
+                var conteudoAnterior = btnGerarCodigo.Content;
+                btnGerarCodigo.Content = "...";
+                try
+                {
+                    var payloadGer = new { p_email = _donoEmail, p_password = _donoPassword };
+                    using var reqGer = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/gerar_codigo_interno");
+                    reqGer.Content = new System.Net.Http.StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(payloadGer), Encoding.UTF8, "application/json");
+                    reqGer.Headers.Add("apikey", anon);
+                    reqGer.Headers.Add("Authorization", "Bearer " + anon);
+                    var respGer = await _redeHttp.SendAsync(reqGer);
+                    var jGer = Newtonsoft.Json.Linq.JObject.Parse(await respGer.Content.ReadAsStringAsync());
+                    if (jGer["error"] != null)
+                    {
+                        string errGer = jGer["error"]!.ToString();
+                        MessageBox.Show(errGer == "invalid_credentials" ? "Sessão do dono expirada, faça login online de novo." : errGer,
+                            "Gerar código", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    else
+                    {
+                        txtBarcode.Text = jGer["codigo"]?.ToString() ?? "";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Sem conexão com a nuvem para gerar o código.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                    System.Diagnostics.Debug.WriteLine($"[gerar_codigo_interno Error]: {ex.Message}");
+                }
+                finally
+                {
+                    btnGerarCodigo.Content = conteudoAnterior;
+                    btnGerarCodigo.IsEnabled = true;
+                }
+            };
+
             stack.Children.Add(createField("Categoria", cmbCategoria));
             stack.Children.Add(createField("Unidade de Medida", cmbUnidade));
 

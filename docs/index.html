@@ -406,8 +406,11 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
       <div style="flex:1"><label>Preço de custo (R$)</label><input id="prodPrecoCusto" type="number" min="0" step="0.01" placeholder="0,00" /></div>
     </div>
 
-    <label>Código de barras (opcional)</label>
-    <input id="prodBarras" type="text" inputmode="numeric" placeholder="opcional" />
+    <label>Código de barras <span class="muted" style="font-weight:400">(sem código? clique em Gerar)</span></label>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="prodBarras" type="text" inputmode="numeric" placeholder="escaneie ou digite" style="flex:1" />
+      <button class="btn-sm" id="prodGerarCodigo" title="Gera um código interno para produto sem código de barras (coxinha, salgado, bolo)">Gerar</button>
+    </div>
 
     <button class="btn-primary" id="prodSalvar">Cadastrar produto</button>
     <div id="prodErr" class="err hidden"></div>
@@ -658,6 +661,30 @@ function abrirNovoProduto(){
   $('prodNome').focus();
 }
 function fecharNovoProduto(){ $('prodModal').classList.add('hidden'); }
+
+// Gera código interno para produto sem código de fábrica (coxinha, salgado, bolo).
+// Vem do servidor (EAN-13 prefixo 2, reservado pela GS1 p/ uso interno da loja):
+// sequência garante que nunca repete, e o prefixo garante que nunca colide com
+// produto de fábrica (789/790).
+async function gerarCodigoInterno(){
+  const btn = $('prodGerarCodigo');
+  const txtAnterior = btn.textContent;
+  btn.disabled = true; btn.textContent = '...';
+  $('prodErr').classList.add('hidden');
+
+  const res = await rpc('gerar_codigo_interno', { p_email: creds.email, p_password: creds.senha });
+
+  btn.disabled = false; btn.textContent = txtAnterior;
+
+  if(res.error){
+    $('prodErr').textContent = res.error==='invalid_credentials'
+      ? "Sessão expirada, faça login novamente."
+      : "Não foi possível gerar o código agora.";
+    $('prodErr').classList.remove('hidden');
+    return;
+  }
+  $('prodBarras').value = res.codigo || '';
+}
 
 async function salvarNovoProduto(){
   const nome = $('prodNome').value.trim();
@@ -939,6 +966,7 @@ $('estqBusca').oninput = renderEstoque;
 $('novoProdBtn').onclick = abrirNovoProduto;
 $('prodModalClose').onclick = fecharNovoProduto;
 $('prodSalvar').onclick = salvarNovoProduto;
+$('prodGerarCodigo').onclick = gerarCodigoInterno;
 $('prodModal').onclick = (e)=>{ if(e.target===$('prodModal')) fecharNovoProduto(); };
 
 // ---- PWA: Service Worker ----
