@@ -1,5 +1,5 @@
 {
-  "version": "1.0.10",
+  "version": "1.0.11",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "notes": "Novidade: botao Gerar no cadastro de produto. Para coxinha, salgado, bolo e outros produtos sem codigo de barras de fabrica, o sistema cria um codigo proprio na hora, sem risco de repetir."
+  "notes": "Nova aba Etiquetas: imprime codigo de barras dos produtos, inclusive para frios vendidos por peso (digite o peso lido na balanca e o preco vai dentro da etiqueta). Correcao: texto digitado nas buscas nao fica mais sobreposto ao rotulo. Correcao: lista de categorias no cadastro agora e legivel."
 }

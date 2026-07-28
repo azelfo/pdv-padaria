@@ -9,9 +9,9 @@
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <!-- Fonte da verdade da versão do app (lida em runtime pelo UpdateService).
          Bump aqui + em PdvPadaria\setup.iss (AppVersion) a cada release. -->
-    <Version>1.0.10</Version>
-    <AssemblyVersion>1.0.10.0</AssemblyVersion>
-    <FileVersion>1.0.10.0</FileVersion>
+    <Version>1.0.11</Version>
+    <AssemblyVersion>1.0.11.0</AssemblyVersion>
+    <FileVersion>1.0.11.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,6 +19,8 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
 
     <PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
+    <!-- Geração de código de barras (EAN-13 / Code-128) para a aba Etiquetas. -->
+    <PackageReference Include="ZXing.Net" Version="0.16.9" />
   </ItemGroup>
 
   <ItemGroup>

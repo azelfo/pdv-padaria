@@ -462,6 +462,14 @@
                             <TextBlock Text="Alertas de Estoque" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+
+                    <!-- Etiquetas (dono e atendente) -->
+                    <Button x:Name="BtnEtiquetas" Style="{StaticResource SidebarButton}" Margin="0,0,0,6" Click="SidebarBtn_Click" Tag="6">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🏷️  " FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Etiquetas" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
 
                 <!-- Rodapé com informações e sincronização -->
@@ -555,9 +563,9 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBox x:Name="ConsultationSearchBox" Style="{StaticResource RoundedInputBox}" 
-                                         GotFocus="SearchBox_GotFocus" LostFocus="SearchBox_LostFocus" KeyDown="ConsultationSearchBox_KeyDown" Height="50" FontSize="16" Padding="15,12"/>
-                                <TextBlock IsHitTestVisible="False" Text="Consulte por Nome ou Código de Barras (ou use o leitor)..."
+                                <TextBox x:Name="ConsultationSearchBox" Style="{StaticResource RoundedInputBox}"
+                                         TextChanged="ConsultationSearchBox_TextChanged" KeyDown="ConsultationSearchBox_KeyDown" Height="50" FontSize="16" Padding="15,12"/>
+                                <TextBlock x:Name="ConsultationPlaceholder" IsHitTestVisible="False" Text="Consulte por Nome ou Código de Barras (ou use o leitor)..."
                                            VerticalAlignment="Center" HorizontalAlignment="Left" Margin="20,0,0,0" Foreground="{StaticResource TextSubtle}" FontSize="16"/>
                                 <Button Grid.Column="1" Content="Consultar" Margin="10,0,0,0" Width="130" Style="{StaticResource ShortcutButton}" Height="50" FontSize="14" Click="ConsultationSearchButton_Click"/>
                             </Grid>
@@ -633,8 +641,8 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBox x:Name="SearchBox" Style="{StaticResource RoundedInputBox}" 
-                                             GotFocus="SearchBox_GotFocus" LostFocus="SearchBox_LostFocus" KeyDown="SearchBox_KeyDown"/>
+                                    <TextBox x:Name="SearchBox" Style="{StaticResource RoundedInputBox}"
+                                             TextChanged="SearchBox_TextChanged" KeyDown="SearchBox_KeyDown"/>
                                     
                                     <TextBlock x:Name="SearchPlaceholder" IsHitTestVisible="False" Text="Pesquise por Nome ou Código de Barras..."
                                                VerticalAlignment="Center" HorizontalAlignment="Left" Margin="15,0,0,0" Foreground="{StaticResource TextSubtle}" FontSize="14"/>
@@ -1767,6 +1775,112 @@
                 </ScrollViewer>
                 </TabItem>
               </TabControl>
+            </TabItem>
+
+            <!-- ABA 6: ETIQUETAS (impressão de código de barras) -->
+            <TabItem Header="Etiquetas">
+                <Grid Margin="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.4*"/>
+                        <ColumnDefinition Width="18"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Coluna esquerda: seleção do produto -->
+                    <Border Grid.Column="0" Background="{StaticResource Surface}" CornerRadius="12" Padding="18" Effect="{StaticResource ElevCard}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                                <TextBlock Text="Imprimir Etiquetas" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimary}"/>
+                                <TextBlock Text="Escolha o produto, a quantidade e imprima o código de barras." FontSize="12" Foreground="{StaticResource TextSubtle}" Margin="0,2,0,0"/>
+                            </StackPanel>
+
+                            <Grid Grid.Row="1" Margin="0,0,0,10">
+                                <TextBox x:Name="EtqSearchBox" Style="{StaticResource RoundedInputBox}" Padding="10,8" FontSize="14"
+                                         TextChanged="EtqSearchBox_TextChanged"/>
+                                <TextBlock x:Name="EtqSearchPlaceholder" IsHitTestVisible="False" Text="Buscar produto por nome ou código..."
+                                           VerticalAlignment="Center" HorizontalAlignment="Left" Margin="12,0,0,0"
+                                           Foreground="{StaticResource TextSubtle}" FontSize="14"/>
+                            </Grid>
+
+                            <ListView x:Name="EtqProductsList" Grid.Row="2" Background="Transparent" BorderThickness="0"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="EtqProductsList_SelectionChanged">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                        <Setter Property="Padding" Value="0"/>
+                                        <Setter Property="Margin" Value="0,0,0,6"/>
+                                        <Setter Property="Background" Value="Transparent"/>
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource BgBase}" CornerRadius="8" Padding="12,10" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}"/>
+                                                <TextBlock FontSize="11" Foreground="{StaticResource TextSubtle}" Margin="0,2,0,0">
+                                                    <Run Text="Cód: "/><Run Text="{Binding BarcodeDisplay, Mode=OneWay}"/>
+                                                    <Run Text="   •   "/><Run Text="{Binding PriceDisplay, Mode=OneWay}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </Border>
+
+                    <!-- Coluna direita: pré-visualização + impressão -->
+                    <Border Grid.Column="2" Background="{StaticResource Surface}" CornerRadius="12" Padding="18" Effect="{StaticResource ElevCard}">
+                        <StackPanel>
+                            <TextBlock Text="Etiqueta" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
+
+                            <!-- Preview da etiqueta -->
+                            <Border x:Name="EtqPreviewCard" Background="White" CornerRadius="6" Padding="8" HorizontalAlignment="Center"
+                                    Width="200" Height="120" Margin="0,0,0,16">
+                                <StackPanel x:Name="EtqPreviewContent" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <TextBlock x:Name="EtqPreviewName" Text="Selecione um produto" FontSize="12" FontWeight="Bold"
+                                               Foreground="Black" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+                                    <Image x:Name="EtqPreviewBarcode" Height="52" Margin="0,4,0,2" Stretch="Uniform"/>
+                                    <TextBlock x:Name="EtqPreviewCode" Text="" FontSize="10" Foreground="Black" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="EtqPreviewPrice" Text="" FontSize="13" FontWeight="Bold" Foreground="Black" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Produto vendido por PESO: atendente digita o peso lido na balança
+                                 e o sistema calcula o preço (peso x preço do quilo cadastrado). -->
+                            <Border x:Name="EtqPesoPanel" Visibility="Collapsed" Background="{StaticResource BgBase}"
+                                    CornerRadius="8" Padding="12" Margin="0,0,0,12"
+                                    BorderBrush="{StaticResource BorderSoft}" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock x:Name="EtqPrecoKgInfo" Text="" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{StaticResource Accent}" Margin="0,0,0,8"/>
+                                    <TextBlock Text="Peso lido na balança (kg)" FontSize="12" Foreground="{StaticResource TextSubtle}" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="EtqPesoBox" Style="{StaticResource RoundedInputBox}" Padding="10,8" FontSize="16"
+                                             TextChanged="EtqPesoBox_TextChanged"/>
+                                    <TextBlock x:Name="EtqPesoTotal" Text="" FontSize="15" FontWeight="Bold"
+                                               Foreground="{StaticResource TextPrimary}" Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <CheckBox x:Name="EtqMostrarPreco" Content="Mostrar preço na etiqueta" IsChecked="True"
+                                      Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12" Checked="EtqPreco_Changed" Unchecked="EtqPreco_Changed"/>
+
+                            <TextBlock Text="Quantidade de etiquetas" FontSize="12" Foreground="{StaticResource TextSubtle}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="EtqQuantidade" Text="1" Style="{StaticResource RoundedInputBox}" Padding="10,8" FontSize="16" Margin="0,0,0,16"/>
+
+                            <Button x:Name="EtqImprimirBtn" Content="Imprimir" Style="{StaticResource ShortcutButton}" Height="44"
+                                    Click="EtqImprimir_Click" IsEnabled="False"/>
+
+                            <TextBlock x:Name="EtqStatus" Text="" FontSize="12" Foreground="{StaticResource TextSubtle}" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </TabItem>
         </TabControl>
     </Grid>

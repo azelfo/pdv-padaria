@@ -13,6 +13,27 @@ namespace PdvPadaria
         {
             base.OnStartup(e);
 
+            // Captura qualquer exceção não tratada na UI: grava em arquivo e NÃO fecha o app.
+            // Serve tanto pra diagnosticar (temos o stack) quanto pra robustez em produção
+            // (um erro numa tela não derruba o caixa inteiro).
+            DispatcherUnhandledException += (s, ev) =>
+            {
+                try
+                {
+                    string dir = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "pdv-padaria");
+                    System.IO.Directory.CreateDirectory(dir);
+                    string log = System.IO.Path.Combine(dir, "erro.log");
+                    System.IO.File.AppendAllText(log,
+                        $"=== {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n{ev.Exception}\n\n");
+                    MessageBox.Show(
+                        $"Ocorreu um erro nesta tela:\n\n{ev.Exception.Message}\n\nO erro foi registrado. O sistema continua funcionando.",
+                        "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                catch { }
+                ev.Handled = true; // impede o app de fechar
+            };
+
             try
             {
                 // 1. Inicializa o serviço de banco SQLite local

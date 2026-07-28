@@ -157,9 +157,13 @@ namespace PdvPadaria
             public int Subtotal { get; set; }
             public string Variation { get; set; } = "NORMAL";
             public string Details { get; set; } = string.Empty;
+            // Item veio de etiqueta de peso: preço já veio pronto na etiqueta, então
+            // não faz sentido mexer na quantidade com os botões +/- (cada etiqueta é
+            // um pacote físico com aquele peso exato).
+            public bool IsPesado { get; set; } = false;
 
-            public string QuantityString => ProductType == "PAO_FRANCES" || Quantity % 1 == 0 
-                ? $"{Quantity:F0} UN" 
+            public string QuantityString => ProductType == "PAO_FRANCES" || Quantity % 1 == 0
+                ? $"{Quantity:F0} UN"
                 : $"{Quantity:F3} KG";
 
             public string PriceUnitString => $"R$ {PriceUnit / 100.0:F2}";
@@ -168,7 +172,7 @@ namespace PdvPadaria
             public bool IsBolo => ProductType == "BOLO";
             public bool IsNotPao => ProductType != "PAO_FRANCES";
             public Visibility BoloVisibility => IsBolo ? Visibility.Visible : Visibility.Collapsed;
-            public Visibility NormalQuantityVisibility => IsNotPao ? Visibility.Visible : Visibility.Collapsed;
+            public Visibility NormalQuantityVisibility => (IsNotPao && !IsPesado) ? Visibility.Visible : Visibility.Collapsed;
             public Visibility DetailsVisibility => string.IsNullOrEmpty(Details) ? Visibility.Collapsed : Visibility.Visible;
         }
 
@@ -307,6 +311,8 @@ namespace PdvPadaria
                 BtnAlertas.Foreground = AppColors.TextMuted;
                 BtnRede.Background = System.Windows.Media.Brushes.Transparent;
                 BtnRede.Foreground = AppColors.TextMuted;
+                BtnEtiquetas.Background = System.Windows.Media.Brushes.Transparent;
+                BtnEtiquetas.Foreground = AppColors.TextMuted;
 
                 // Destaca o botão selecionado
                 btn.Background = AppColors.Surface;
@@ -350,22 +356,341 @@ namespace PdvPadaria
                 {
                     _ = LoadRede();
                 }
+                else if (index == 6)
+                {
+                    LoadEtiquetasProdutos();
+                }
             }
         }
+
+        // ================= ABA 6: ETIQUETAS (impressão de código de barras) =================
+
+        // Item da lista de produtos da aba Etiquetas (não altera nada, só exibição).
+        public class EtiquetaProdView
+        {
+            public Product Produto { get; set; } = null!;
+            public string Name => Produto.Name;
+            public string BarcodeDisplay => string.IsNullOrEmpty(Produto.Barcode) ? "— sem código —" : Produto.Barcode!;
+            public string PriceDisplay => $"R$ {Produto.PriceSale / 100.0:F2}";
+        }
+
+        private List<EtiquetaProdView> _etqTodos = new List<EtiquetaProdView>();
+        private Product? _etqSelecionado;
+
+        private async void LoadEtiquetasProdutos()
+        {
+            try
+            {
+                var connection = App.Database.GetConnection();
+                var produtos = await connection.Table<Product>().Where(p => p.Active).ToListAsync();
+                _etqTodos = produtos
+                    .OrderBy(p => p.Name)
+                    .Select(p => new EtiquetaProdView { Produto = p })
+                    .ToList();
+                AplicarFiltroEtiquetas(EtqSearchBox.Text.Trim());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Erro ao carregar produtos: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void AplicarFiltroEtiquetas(string filtro)
+        {
+            IEnumerable<EtiquetaProdView> lista = _etqTodos;
+            if (!string.IsNullOrWhiteSpace(filtro))
+            {
+                lista = _etqTodos.Where(v =>
+                    v.Name.Contains(filtro, StringComparison.OrdinalIgnoreCase) ||
+                    (v.Produto.Barcode ?? "").Contains(filtro, StringComparison.OrdinalIgnoreCase));
+            }
+            EtqProductsList.ItemsSource = lista.ToList();
+        }
+
+        private void EtqSearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            SincronizarPlaceholder(EtqSearchBox, EtqSearchPlaceholder);
+            if (_etqTodos.Count > 0) AplicarFiltroEtiquetas(EtqSearchBox.Text.Trim());
+        }
+
+        private void EtqProductsList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            _etqSelecionado = (EtqProductsList.SelectedItem as EtiquetaProdView)?.Produto;
+            if (EtqPesoBox != null) EtqPesoBox.Text = string.Empty; // peso é por pesagem, não reaproveita
+            AtualizarPreviewEtiqueta();
+        }
+
+        private void EtqPreco_Changed(object sender, RoutedEventArgs e)
+        {
+            AtualizarPreviewEtiqueta();
+        }
+
+        private void EtqPesoBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            AtualizarPreviewEtiqueta();
+        }
+
+        private bool EtqEhPesado => _etqSelecionado != null && _etqSelecionado.UnitMeasure == "KG";
+
+        // Código e preço que serão realmente impressos (para peso, mudam a cada pesagem).
+        private string? _etqCodigoImprimir;
+        private int _etqPrecoImprimir;
+
+        private void AtualizarPreviewEtiqueta()
+        {
+            // O checkbox "Mostrar preço" tem IsChecked=True, então o evento Checked dispara
+            // durante o InitializeComponent — antes de EtqImprimirBtn/EtqStatus existirem.
+            // Sem este guard, dava NullReference já na abertura da janela (crash no login).
+            if (EtqImprimirBtn == null || EtqStatus == null || EtqPesoPanel == null) return;
+
+            _etqCodigoImprimir = null;
+            _etqPrecoImprimir = 0;
+
+            if (_etqSelecionado == null)
+            {
+                EtqPreviewName.Text = "Selecione um produto";
+                EtqPreviewBarcode.Source = null;
+                EtqPreviewCode.Text = "";
+                EtqPreviewPrice.Text = "";
+                EtqPesoPanel.Visibility = Visibility.Collapsed;
+                EtqImprimirBtn.IsEnabled = false;
+                EtqStatus.Text = "";
+                return;
+            }
+
+            EtqPreviewName.Text = _etqSelecionado.Name;
+            EtqPesoPanel.Visibility = EtqEhPesado ? Visibility.Visible : Visibility.Collapsed;
+
+            if (string.IsNullOrEmpty(_etqSelecionado.Barcode))
+            {
+                // Produto sem código não dá para etiquetar (nada para o leitor bipar).
+                EtqPreviewBarcode.Source = null;
+                EtqPreviewCode.Text = "sem código de barras";
+                EtqPreviewPrice.Text = "";
+                EtqImprimirBtn.IsEnabled = false;
+                EtqStatus.Text = "Este produto não tem código de barras. Cadastre/gere um código antes de etiquetar.";
+                return;
+            }
+
+            if (EtqEhPesado) AtualizarPreviewPeso();
+            else AtualizarPreviewUnidade();
+        }
+
+        // Etiqueta comum: o código do produto vai direto, preço fixo do cadastro.
+        private void AtualizarPreviewUnidade()
+        {
+            _etqCodigoImprimir = _etqSelecionado!.Barcode;
+            _etqPrecoImprimir = _etqSelecionado.PriceSale;
+
+            EtqPreviewBarcode.Source = Services.BarcodeService.Gerar(_etqCodigoImprimir);
+            EtqPreviewCode.Text = _etqCodigoImprimir;
+            EtqPreviewPrice.Text = (EtqMostrarPreco.IsChecked == true) ? $"R$ {_etqPrecoImprimir / 100.0:F2}" : "";
+            EtqImprimirBtn.IsEnabled = EtqPreviewBarcode.Source != null;
+            EtqStatus.Text = EtqPreviewBarcode.Source == null ? "Não foi possível gerar o código de barras." : "";
+        }
+
+        // Etiqueta de peso: preço = peso digitado x preço do quilo, embutido no código de barras.
+        private void AtualizarPreviewPeso()
+        {
+            var prod = _etqSelecionado!;
+            EtqPrecoKgInfo.Text = $"Preço do quilo: R$ {prod.PriceSale / 100.0:F2}";
+
+            void Bloqueia(string msg, string aviso = "")
+            {
+                EtqPreviewBarcode.Source = null;
+                EtqPreviewCode.Text = "";
+                EtqPreviewPrice.Text = "";
+                EtqPesoTotal.Text = msg;
+                EtqImprimirBtn.IsEnabled = false;
+                EtqStatus.Text = aviso;
+            }
+
+            if (!Services.WeightBarcodeService.SuportaEtiquetaPeso(prod.Barcode))
+            {
+                Bloqueia("", "Para etiqueta de peso o produto precisa de um código interno (gerado pelo botão \"Gerar\" no cadastro). O código atual é de fábrica ou digitado à mão.");
+                return;
+            }
+
+            if (prod.PriceSale <= 0)
+            {
+                Bloqueia("", "Cadastre o preço do quilo neste produto antes de etiquetar.");
+                return;
+            }
+
+            string pesoTexto = (EtqPesoBox.Text ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(pesoTexto))
+            {
+                Bloqueia("", "Digite o peso lido na balança.");
+                return;
+            }
+
+            if (!TryParseDouble(pesoTexto, out double pesoKg) || pesoKg <= 0)
+            {
+                Bloqueia("", "Peso inválido. Use por exemplo 0,300 para 300 gramas.");
+                return;
+            }
+
+            int precoCentavos = (int)Math.Round(prod.PriceSale * pesoKg);
+            if (precoCentavos <= 0)
+            {
+                Bloqueia("", "Peso muito pequeno para gerar preço.");
+                return;
+            }
+            if (precoCentavos > Services.WeightBarcodeService.PrecoMaximoCentavos)
+            {
+                Bloqueia("", $"Valor acima do limite da etiqueta (R$ {Services.WeightBarcodeService.PrecoMaximoCentavos / 100.0:F2}). Divida em pacotes menores.");
+                return;
+            }
+
+            string? codigo = Services.WeightBarcodeService.Gerar(prod.Barcode, precoCentavos);
+            if (codigo == null)
+            {
+                Bloqueia("", "Não foi possível gerar o código de peso deste produto.");
+                return;
+            }
+
+            _etqCodigoImprimir = codigo;
+            _etqPrecoImprimir = precoCentavos;
+
+            EtqPesoTotal.Text = $"{pesoKg:F3} kg  =  R$ {precoCentavos / 100.0:F2}";
+            EtqPreviewBarcode.Source = Services.BarcodeService.Gerar(codigo);
+            EtqPreviewCode.Text = codigo;
+            EtqPreviewPrice.Text = (EtqMostrarPreco.IsChecked == true) ? $"R$ {precoCentavos / 100.0:F2}" : "";
+            EtqImprimirBtn.IsEnabled = EtqPreviewBarcode.Source != null;
+            EtqStatus.Text = "";
+        }
+
+        private void EtqImprimir_Click(object sender, RoutedEventArgs e)
+        {
+            if (_etqSelecionado == null || string.IsNullOrEmpty(_etqCodigoImprimir)) return;
+
+            int qtd;
+            if (EtqEhPesado)
+            {
+                // Cada etiqueta de peso vale por UM pacote pesado. Imprimir várias iguais
+                // permitiria colar o mesmo preço em pacotes de pesos diferentes.
+                qtd = 1;
+            }
+            else if (!int.TryParse(EtqQuantidade.Text.Trim(), out qtd) || qtd < 1 || qtd > 200)
+            {
+                MessageBox.Show("Informe uma quantidade entre 1 e 200.", "Etiquetas", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var barcodeImg = Services.BarcodeService.Gerar(_etqCodigoImprimir, 600, 180);
+            if (barcodeImg == null)
+            {
+                MessageBox.Show("Não foi possível gerar o código de barras para impressão.", "Etiquetas", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            var dlg = new System.Windows.Controls.PrintDialog();
+            if (dlg.ShowDialog() != true) return;
+
+            bool mostrarPreco = EtqMostrarPreco.IsChecked == true;
+            string nome = _etqSelecionado.Name;
+            string codigo = _etqCodigoImprimir!;
+            string preco = $"R$ {_etqPrecoImprimir / 100.0:F2}";
+
+            var doc = new System.Windows.Documents.FixedDocument();
+            for (int i = 0; i < qtd; i++)
+            {
+                var page = new System.Windows.Documents.FixedPage
+                {
+                    Width = MmParaDiu(50),
+                    Height = MmParaDiu(30)
+                };
+                page.Children.Add(ConstruirEtiqueta(nome, barcodeImg, codigo, mostrarPreco ? preco : null));
+                var pageContent = new System.Windows.Documents.PageContent();
+                ((System.Windows.Markup.IAddChild)pageContent).AddChild(page);
+                doc.Pages.Add(pageContent);
+            }
+
+            try
+            {
+                dlg.PrintDocument(doc.DocumentPaginator, $"Etiquetas - {nome}");
+                EtqStatus.Text = $"✓ {qtd} etiqueta(s) enviada(s) para impressão.";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Erro ao imprimir: {ex.Message}", "Etiquetas", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        // Monta o visual de UMA etiqueta (50x30mm): nome em cima, código de barras no meio,
+        // número + preço embaixo. Cada página de impressão precisa da própria instância.
+        private FrameworkElement ConstruirEtiqueta(string nome, System.Windows.Media.Imaging.BitmapSource barcode, string codigo, string? preco)
+        {
+            var painel = new StackPanel
+            {
+                Width = MmParaDiu(50),
+                Height = MmParaDiu(30),
+                Background = System.Windows.Media.Brushes.White,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            painel.Children.Add(new TextBlock
+            {
+                Text = nome,
+                FontSize = 9,
+                FontWeight = FontWeights.Bold,
+                Foreground = System.Windows.Media.Brushes.Black,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                MaxHeight = 26,
+                Margin = new Thickness(2, 2, 2, 0)
+            });
+            painel.Children.Add(new System.Windows.Controls.Image
+            {
+                Source = barcode,
+                Height = MmParaDiu(11),
+                Stretch = System.Windows.Media.Stretch.Uniform,
+                Margin = new Thickness(2, 1, 2, 0)
+            });
+            painel.Children.Add(new TextBlock
+            {
+                Text = codigo,
+                FontSize = 8,
+                Foreground = System.Windows.Media.Brushes.Black,
+                TextAlignment = TextAlignment.Center
+            });
+            if (!string.IsNullOrEmpty(preco))
+            {
+                painel.Children.Add(new TextBlock
+                {
+                    Text = preco,
+                    FontSize = 11,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = System.Windows.Media.Brushes.Black,
+                    TextAlignment = TextAlignment.Center,
+                    Margin = new Thickness(0, 1, 0, 0)
+                });
+            }
+            return painel;
+        }
+
+        // Milímetros -> unidades WPF (1 polegada = 96 DIU = 25.4 mm).
+        private static double MmParaDiu(double mm) => mm * 96.0 / 25.4;
 
         // ================= ABA 0: FRENTE DE CAIXA (PDV) LOGIC =================
 
-        private void SearchBox_GotFocus(object sender, RoutedEventArgs e)
+        // Placeholder das caixas de busca: a visibilidade segue o TEXTO digitado, não o foco.
+        // Antes um único par GotFocus/LostFocus era compartilhado por caixas diferentes, então
+        // digitar numa escondia o rótulo da outra e o texto ficava sobreposto ao placeholder.
+        private static void SincronizarPlaceholder(TextBox? caixa, TextBlock? placeholder)
         {
-            SearchPlaceholder.Visibility = Visibility.Collapsed;
+            if (caixa == null || placeholder == null) return;
+            placeholder.Visibility = string.IsNullOrEmpty(caixa.Text) ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        private void SearchBox_LostFocus(object sender, RoutedEventArgs e)
+        private void SearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
         {
-            if (string.IsNullOrEmpty(SearchBox.Text))
-            {
-                SearchPlaceholder.Visibility = Visibility.Visible;
-            }
+            SincronizarPlaceholder(SearchBox, SearchPlaceholder);
+        }
+
+        private void ConsultationSearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            SincronizarPlaceholder(ConsultationSearchBox, ConsultationPlaceholder);
         }
 
         private void SearchBox_KeyDown(object sender, KeyEventArgs e)
@@ -1148,6 +1473,16 @@ namespace PdvPadaria
         {
             try
             {
+                // Etiqueta de PESO (preço embutido) é resolvida antes da busca normal:
+                // esse código não existe como produto no banco, ele carrega o preço dentro.
+                // Só entra aqui se casar prefixo "21" + dígito verificador, então código de
+                // fábrica nunca é confundido.
+                if (Services.WeightBarcodeService.TentarLer(barcode, out string refPeso, out int precoPeso))
+                {
+                    await ProcessarEtiquetaPesoAsync(barcode, refPeso, precoPeso);
+                    return;
+                }
+
                 var connection = App.Database.GetConnection();
                 var product = await connection.Table<Product>()
                     .Where(p => p.Barcode == barcode && p.Active)
@@ -1185,6 +1520,75 @@ namespace PdvPadaria
             {
                 MessageBox.Show($"Erro ao processar código de barras: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        // Trata a leitura de uma etiqueta de peso: descobre o produto pelo trecho de
+        // identificação do código e usa o preço que veio embutido na própria etiqueta.
+        private async Task ProcessarEtiquetaPesoAsync(string codigoLido, string refProduto, int precoCentavos)
+        {
+            var connection = App.Database.GetConnection();
+
+            // O identificador do produto vem dos últimos dígitos da sequência do código
+            // interno, então a comparação é feita em memória sobre os produtos ativos.
+            var ativos = await connection.Table<Product>().Where(p => p.Active).ToListAsync();
+            var product = ativos.FirstOrDefault(p =>
+                Services.WeightBarcodeService.ExtrairRefProduto(p.Barcode) == refProduto);
+
+            if (product == null)
+            {
+                MessageBox.Show($"Etiqueta de peso '{codigoLido}' não corresponde a nenhum produto cadastrado nesta loja.",
+                    "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Recupera o peso a partir do preço impresso e do preço do quilo cadastrado.
+            double pesoKg = product.PriceSale > 0 ? (double)precoCentavos / product.PriceSale : 0;
+
+            if (_currentState == PdvState.Consultation)
+            {
+                ConsultationProductName.Text = product.Name;
+                ConsultationProductPrice.Text = $"R$ {precoCentavos / 100.0:F2}  ({pesoKg:F3} kg)";
+                ConsultationProductStock.Text = $"Estoque: {product.LocalStockQuantity:F3} KG";
+                var categoria = await connection.FindAsync<Category>(product.CategoryId);
+                ConsultationProductCategory.Text = $"Categoria: {(categoria != null ? categoria.Name : "Geral")}";
+                ConsultationBarcode.Text = codigoLido;
+                return;
+            }
+
+            if (_currentState == PdvState.ActiveSale)
+            {
+                AddWeightItemToCart(product, pesoKg, precoCentavos);
+            }
+        }
+
+        // Adiciona ao carrinho um item vindo de etiqueta de peso. Cada etiqueta é um pacote
+        // físico distinto, então vira SEMPRE uma linha nova (não funde com outra igual) e o
+        // subtotal é exatamente o valor impresso na etiqueta.
+        private void AddWeightItemToCart(Product product, double pesoKg, int precoCentavos)
+        {
+            double jaNoCarrinho = _cartItems.Where(i => i.ProductId == product.Id).Sum(i => i.Quantity);
+            if (product.LocalStockQuantity - jaNoCarrinho < pesoKg)
+            {
+                MessageBox.Show(
+                    $"Estoque insuficiente para '{product.Name}'.\nDisponível: {product.LocalStockQuantity:F3} KG.",
+                    "Sem Estoque", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            _cartItems.Add(new CartItemView
+            {
+                CartItemId = Guid.NewGuid().ToString(),
+                ProductId = product.Id,
+                ProductName = product.Name,
+                ProductType = product.Type,
+                Quantity = pesoKg,
+                PriceUnit = product.PriceSale,
+                Subtotal = precoCentavos,
+                IsPesado = true,
+                Details = $"{pesoKg:F3} kg x R$ {product.PriceSale / 100.0:F2}/kg"
+            });
+
+            UpdateTotals();
         }
 
         private void SetPdvState(PdvState state)
@@ -2464,8 +2868,11 @@ namespace PdvPadaria
 
             var txtNome = mkBox();
             var txtBarcode = mkBox();
-            var cmbCategoria = new ComboBox { Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
-            var cmbUnidade = new ComboBox { SelectedIndex = 0, Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
+            // Fundo CLARO de propósito: o popup do ComboBox do WPF usa cores de sistema,
+            // então texto preto sobre AppColors.Surface (#141419) ficava invisível — o
+            // usuário não enxergava a categoria selecionada e acabava salvando a errada.
+            var cmbCategoria = new ComboBox { Background = System.Windows.Media.Brushes.White, Foreground = System.Windows.Media.Brushes.Black, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
+            var cmbUnidade = new ComboBox { SelectedIndex = 0, Background = System.Windows.Media.Brushes.White, Foreground = System.Windows.Media.Brushes.Black, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
             cmbUnidade.Items.Add("UN");
             cmbUnidade.Items.Add("KG");
             var txtPrecoVenda = mkBox(); txtPrecoVenda.Text = "0,00";
@@ -2547,6 +2954,18 @@ namespace PdvPadaria
             pricesGrid.Children.Add(custoPanel); Grid.SetColumn(custoPanel, 0);
             pricesGrid.Children.Add(vendaPanel); Grid.SetColumn(vendaPanel, 2);
             stack.Children.Add(pricesGrid);
+
+            // Em KG o preço cadastrado é o preço do QUILO (a etiqueta de peso multiplica
+            // pelo peso pesado). Deixa isso explícito no rótulo para evitar cadastrar
+            // o preço de uma peça inteira por engano.
+            cmbUnidade.SelectionChanged += (s, ev) =>
+            {
+                bool ehKg = (cmbUnidade.SelectedItem?.ToString() ?? "UN") == "KG";
+                if (custoPanel.Children[0] is TextBlock lblCusto)
+                    lblCusto.Text = ehKg ? "Custo por KG (R$)" : "Preço Custo (R$)";
+                if (vendaPanel.Children[0] is TextBlock lblVenda)
+                    lblVenda.Text = ehKg ? "Preço por KG (R$)" : "Preço Venda (R$)";
+            };
 
             var confirmBtn = new Button
             {
@@ -2713,8 +3132,11 @@ namespace PdvPadaria
 
             var txtNome = createTextBox();
             var txtBarcode = createTextBox();
-            var cmbCategoria = new ComboBox { Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
-            var cmbUnidade = new ComboBox { SelectedIndex = 0, Background = AppColors.Surface, Foreground = System.Windows.Media.Brushes.Black };
+            // Fundo CLARO de propósito: o popup do ComboBox do WPF usa cores de sistema,
+            // então texto preto sobre AppColors.Surface (#141419) ficava invisível — o
+            // usuário não enxergava a categoria selecionada e acabava salvando a errada.
+            var cmbCategoria = new ComboBox { Background = System.Windows.Media.Brushes.White, Foreground = System.Windows.Media.Brushes.Black, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
+            var cmbUnidade = new ComboBox { SelectedIndex = 0, Background = System.Windows.Media.Brushes.White, Foreground = System.Windows.Media.Brushes.Black, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
             cmbUnidade.Items.Add("UN");
             cmbUnidade.Items.Add("KG");
             var txtPrecoVenda = createTextBox();
