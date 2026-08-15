@@ -20,7 +20,7 @@ namespace PdvPadaria.Services
         /// <summary>True se a string ja for um hash BCrypt valido ($2a$/$2b$/$2y$).</summary>
         public static bool IsHashed(string? stored)
         {
-            if (string.IsNullOrEmpty(stored) || stored.Length < 7) return false;
+            if (string.IsNullOrEmpty(stored) || stored!.Length < 7) return false;
             return stored.StartsWith("$2a$") || stored.StartsWith("$2b$") || stored.StartsWith("$2y$");
         }
 

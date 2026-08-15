@@ -270,8 +270,11 @@ namespace PdvPadaria.Views
             
             input = input.Trim().Replace("R$", "").Trim();
             
-            if (double.TryParse(input.Replace(',', '.'), CultureInfo.InvariantCulture, out val)) return true;
-            if (double.TryParse(input.Replace('.', ','), new CultureInfo("pt-BR"), out val)) return true;
+            // O .NET Framework 4.8 não tem a sobrecarga TryParse(string, IFormatProvider, out)
+            // — só a que recebe NumberStyles junto. NumberStyles.Any aceita separador de
+            // milhar, sinal e decimal, que é o comportamento desejado aqui.
+            if (double.TryParse(input.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out val)) return true;
+            if (double.TryParse(input.Replace('.', ','), NumberStyles.Any, new CultureInfo("pt-BR"), out val)) return true;
             
             return false;
         }

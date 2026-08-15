@@ -16,7 +16,7 @@ namespace PdvPadaria.Services
         public static BitmapSource? Gerar(string? codigo, int largura = 300, int altura = 90)
         {
             if (string.IsNullOrWhiteSpace(codigo)) return null;
-            codigo = codigo.Trim();
+            codigo = codigo!.Trim();
 
             var formato = EscolherFormato(codigo);
 

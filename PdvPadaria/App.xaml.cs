@@ -13,6 +13,21 @@ namespace PdvPadaria
         {
             base.OnStartup(e);
 
+            // TLS 1.2 obrigatório ANTES de qualquer chamada de rede.
+            // No Windows 7 SP1 / 8.1 o padrão do sistema ainda é TLS 1.0, e tanto o
+            // Supabase quanto o GitHub (auto-update) recusam TLS 1.0 — sem isto o PDV
+            // abriria normalmente mas nunca sincronizaria nem atualizaria, sem erro claro.
+            // Usa o valor numérico (3072 = Tls12) porque o enum SecurityProtocolType.Tls12
+            // não existe em versões antigas do .NET Framework.
+            try
+            {
+                System.Net.ServicePointManager.SecurityProtocol |= (System.Net.SecurityProtocolType)3072;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TLS 1.2 setup]: {ex.Message}");
+            }
+
             // Captura qualquer exceção não tratada na UI: grava em arquivo e NÃO fecha o app.
             // Serve tanto pra diagnosticar (temos o stack) quanto pra robustez em produção
             // (um erro numa tela não derruba o caixa inteiro).

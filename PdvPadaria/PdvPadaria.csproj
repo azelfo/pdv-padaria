@@ -2,16 +2,27 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- .NET Framework 4.8 (e não .NET 8) porque as lojas usam máquinas antigas com
+         Windows 7 SP1 / 8.1, onde o .NET 8 não roda (a Microsoft não suporta). O 4.8
+         é instalável no Win7 SP1 e Win8.1, e já vem embutido no Windows 10/11.
+         ATENÇÃO: Windows 8.0 "puro" não é suportado — precisa do update grátis p/ 8.1. -->
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- x86 de propósito: o e_sqlite3.dll nativo que o sqlite-net-pcl copia no build
+         .NET Framework é 32 bits. Em AnyCPU o app vira processo 64 bits no Windows
+         64 bits e a carga do SQLite falha com "%1 não é um aplicativo Win32 válido"
+         (comprovado em teste). Em x86 o app roda nos dois mundos: Windows 32 bits
+         nativamente e Windows 64 bits via WOW64. Um PDV não precisa de +4GB de RAM. -->
+    <PlatformTarget>x86</PlatformTarget>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <!-- Fonte da verdade da versão do app (lida em runtime pelo UpdateService).
          Bump aqui + em PdvPadaria\setup.iss (AppVersion) a cada release. -->
-    <Version>1.0.12</Version>
-    <AssemblyVersion>1.0.12.0</AssemblyVersion>
-    <FileVersion>1.0.12.0</FileVersion>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +32,12 @@
     <PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
     <!-- Geração de código de barras (EAN-13 / Code-128) para a aba Etiquetas. -->
     <PackageReference Include="ZXing.Net" Version="0.16.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- No .NET Framework o HttpClient vive nesta assembly do próprio Windows e
+         não é referenciada por padrão em projeto SDK-style. -->
+    <Reference Include="System.Net.Http" />
   </ItemGroup>
 
   <ItemGroup>

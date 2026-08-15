@@ -33,7 +33,9 @@ namespace PdvPadaria.Services
         public static string? ExtrairRefProduto(string? barcodeInterno)
         {
             if (string.IsNullOrWhiteSpace(barcodeInterno)) return null;
-            var b = barcodeInterno.Trim();
+            // "!" porque no .NET Framework o IsNullOrWhiteSpace não carrega a anotação
+            // [NotNullWhen(false)] que o compilador usa para saber que aqui não é nulo.
+            var b = barcodeInterno!.Trim();
             if (b.Length != 13 || !SoDigitos(b)) return null;
             if (b[0] != '2') return null;
             if (b.StartsWith(Prefixo)) return null; // já é uma etiqueta de peso, não um produto
@@ -71,7 +73,7 @@ namespace PdvPadaria.Services
             precoCentavos = 0;
 
             if (string.IsNullOrWhiteSpace(codigo)) return false;
-            var c = codigo.Trim();
+            var c = codigo!.Trim();
             if (c.Length != 13 || !SoDigitos(c)) return false;
             if (!c.StartsWith(Prefixo)) return false;
             if (CalcularDigitoEan13(c.Substring(0, 12)) != (c[12] - '0')) return false;

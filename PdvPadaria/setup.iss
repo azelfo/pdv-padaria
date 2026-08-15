@@ -4,7 +4,7 @@
 [Setup]
 AppId={{C6F2A3F4-5987-45CC-AB1B-7AA8D4D4A994}
 AppName=PDV - Padaria Venâncio
-AppVersion=1.0.12
+AppVersion=1.1.0
 AppPublisher=Padaria Venâncio
 AppPublisherURL=https://www.padariavenancio.com.br
 DefaultDirName={autopf}\PDV Padaria Venancio
@@ -28,10 +28,17 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 
 [Files]
 ; Executável Principal
-Source: "d:\PDV\PdvPadaria\bin\Release\net8.0-windows\publish\PdvPadaria.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\PdvPadaria.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Todas as dependências geradas pelo Publish (DLLs, configurações, .env)
-Source: "d:\PDV\PdvPadaria\bin\Release\net8.0-windows\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Nota: Ajuste os caminhos acima se utilizar a publicação com RID específico (ex: \publish\win-x64\)
+
+[InstallDelete]
+; Restos da versão anterior, que rodava em .NET 8 e usava outro layout de arquivos.
+; Sem isto, a pasta ficaria com arquivos órfãos após a migração para .NET Framework 4.8.
+Type: filesandordirs; Name: "{app}\runtimes"
+Type: files; Name: "{app}\PdvPadaria.runtimeconfig.json"
+Type: files; Name: "{app}\PdvPadaria.deps.json"
 
 [Icons]
 ; Atalho no Menu Iniciar (Criado Obrigatoriamente)
@@ -49,80 +56,76 @@ Filename: "{app}\PdvPadaria.exe"; Flags: nowait; Check: ShouldRelaunchSilently
 
 [Code]
 const
-  // Link permanente da Microsoft para o .NET 8 Desktop Runtime x64 (redireciona
-  // sempre para o build mais recente da linha 8.0).
-  URL_DOTNET8 = 'https://aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x64.exe';
+  // Instalador offline oficial do .NET Framework 4.8 (roda em Windows 7 SP1, 8.1, 10 e 11).
+  URL_NETFX48 = 'https://go.microsoft.com/fwlink/?linkid=2088631';
+  // Chave onde o Windows registra a versão instalada do .NET Framework 4.x.
+  // Release >= 528040 significa 4.8 ou superior (valor documentado pela Microsoft).
+  REG_NETFX = 'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full';
+  RELEASE_MINIMO_48 = 528040;
 
 function ShouldRelaunchSilently(): Boolean;
 begin
   Result := WizardSilent();
 end;
 
-// Pasta onde o .NET registra os runtimes de Desktop (WPF/WinForms) instalados.
-// A detecção é feita por PASTA, e não pelo registro: a chave de registro do .NET
-// muda de lugar conforme a versão do instalador, mas esta pasta é estável.
-function PastaRuntimesDesktop(): String;
-begin
-  if IsWin64 then
-    Result := ExpandConstant('{commonpf64}\dotnet\shared\Microsoft.WindowsDesktop.App')
-  else
-    Result := ExpandConstant('{commonpf32}\dotnet\shared\Microsoft.WindowsDesktop.App');
-end;
-
-// True se existir qualquer runtime da linha 8.x instalado (ex.: 8.0.30).
-function DotNet8DesktopInstalado(): Boolean;
+// Lê no registro a versão do .NET Framework 4.x instalada. A Microsoft documenta
+// que o valor "Release" >= 528040 significa 4.8 ou superior.
+function NetFramework48Instalado(): Boolean;
 var
-  Base: String;
-  FindRec: TFindRec;
+  Release: Cardinal;
 begin
   Result := False;
-  Base := PastaRuntimesDesktop();
-  if not DirExists(Base) then
-    Exit;
-
-  if FindFirst(Base + '\*', FindRec) then
-  begin
-    try
-      repeat
-        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
-        begin
-          if Copy(FindRec.Name, 1, 2) = '8.' then
-          begin
-            Result := True;
-            Exit;
-          end;
-        end;
-      until not FindNext(FindRec);
-    finally
-      FindClose(FindRec);
-    end;
-  end;
+  if RegQueryDWordValue(HKEY_LOCAL_MACHINE, REG_NETFX, 'Release', Release) then
+    Result := Release >= RELEASE_MINIMO_48;
 end;
 
-// O .NET 8 (e portanto este PDV) não roda em Windows 7, 8 nem 8.1 — a própria
-// Microsoft não dá suporte. Barra a instalação com uma mensagem clara em vez de
-// deixar o app instalar e falhar na hora de abrir.
+// O .NET Framework 4.8 roda em Windows 7 SP1, 8.1, 10 e 11 — mas NÃO no Windows 7
+// sem Service Pack 1, nem no Windows 8.0 "puro" (que precisa do update grátis 8.1),
+// nem em versões anteriores. Barra com mensagem clara em vez de instalar um app
+// que não vai abrir.
 function InitializeSetup(): Boolean;
 var
   Versao: TWindowsVersion;
 begin
   Result := True;
   GetWindowsVersionEx(Versao);
-  if Versao.Major < 10 then
+
+  // Windows 7 = 6.1 (exige SP1) | Windows 8.0 = 6.2 | Windows 8.1 = 6.3 | Win10/11 = 10.0
+  if (Versao.Major < 6) or ((Versao.Major = 6) and (Versao.Minor < 1)) then
   begin
-    MsgBox('Este sistema precisa do Windows 10 ou Windows 11.' + #13#10#13#10 +
-           'A tecnologia usada pelo PDV (.NET 8) não funciona no Windows 7, 8 ou 8.1 — ' +
-           'a Microsoft encerrou o suporte a essas versões.' + #13#10#13#10 +
-           'Atualize o computador para o Windows 10 ou 11 para usar o PDV.',
+    MsgBox('Este computador usa uma versão do Windows muito antiga (anterior ao Windows 7).' + #13#10#13#10 +
+           'O PDV precisa de Windows 7 com Service Pack 1, Windows 8.1, Windows 10 ou Windows 11.',
            mbCriticalError, MB_OK);
     Result := False;
+    Exit;
+  end;
+
+  // Windows 7 sem SP1 não recebe o .NET Framework 4.8.
+  if (Versao.Major = 6) and (Versao.Minor = 1) and (Versao.ServicePackMajor < 1) then
+  begin
+    MsgBox('Este Windows 7 está sem o Service Pack 1.' + #13#10#13#10 +
+           'Instale o Service Pack 1 pelo Windows Update e rode este instalador de novo.',
+           mbCriticalError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
+  // Windows 8.0 não recebe o .NET Framework 4.8; o update para 8.1 é gratuito.
+  if (Versao.Major = 6) and (Versao.Minor = 2) then
+  begin
+    MsgBox('Este computador usa o Windows 8, que a Microsoft não atualiza mais.' + #13#10#13#10 +
+           'Atualize gratuitamente para o Windows 8.1 (pela Loja do Windows ou Windows Update) ' +
+           'e rode este instalador de novo.',
+           mbCriticalError, MB_OK);
+    Result := False;
+    Exit;
   end;
 end;
 
-// Antes de copiar os arquivos: garante que o .NET 8 Desktop Runtime existe.
-// Se faltar, baixa da Microsoft e instala em silêncio. Roda tanto na instalação
-// manual quanto na atualização automática. Retornar texto aqui aborta a instalação
-// mostrando esse texto ao usuário.
+// Antes de copiar os arquivos: garante que o .NET Framework 4.8 existe.
+// No Windows 10/11 ele já vem de fábrica, então isto só age em máquinas antigas
+// (Windows 7 SP1 / 8.1), baixando e instalando em silêncio. Retornar texto aqui
+// aborta a instalação mostrando esse texto ao usuário.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   CodigoSaida: Integer;
@@ -130,35 +133,34 @@ var
 begin
   Result := '';
 
-  if DotNet8DesktopInstalado() then
+  if NetFramework48Instalado() then
     Exit;
 
-  // Baixa o runtime (arquivo vai para a pasta temporária do Setup).
   try
-    DownloadTemporaryFile(URL_DOTNET8, 'dotnet8-desktop-runtime.exe', '', nil);
+    DownloadTemporaryFile(URL_NETFX48, 'ndp48-instalador.exe', '', nil);
   except
-    Result := 'O PDV precisa do componente .NET 8 da Microsoft, que ainda não está instalado ' +
-              'neste computador, e não foi possível baixá-lo agora.' + #13#10#13#10 +
+    Result := 'O PDV precisa do componente ".NET Framework 4.8" da Microsoft, que ainda não está ' +
+              'instalado neste computador, e não foi possível baixá-lo agora.' + #13#10#13#10 +
               'Verifique a conexão com a internet e tente novamente.';
     Exit;
   end;
 
-  Instalador := ExpandConstant('{tmp}\dotnet8-desktop-runtime.exe');
+  Instalador := ExpandConstant('{tmp}\ndp48-instalador.exe');
 
-  if not Exec(Instalador, '/install /quiet /norestart', '', SW_SHOW, ewWaitUntilTerminated, CodigoSaida) then
+  if not Exec(Instalador, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, CodigoSaida) then
   begin
-    Result := 'Não foi possível executar o instalador do componente .NET 8 da Microsoft.';
+    Result := 'Não foi possível executar o instalador do .NET Framework 4.8 da Microsoft.';
     Exit;
   end;
 
-  // 0 = sucesso; 3010 = sucesso mas pede reinício; 1638 = já existe versão igual/maior.
-  if CodigoSaida = 3010 then
+  // 0 = sucesso; 3010 e 1641 = sucesso mas pede reinício; 1638 = já há versão igual/maior.
+  if (CodigoSaida = 3010) or (CodigoSaida = 1641) then
     NeedsRestart := True
   else if (CodigoSaida <> 0) and (CodigoSaida <> 1638) then
   begin
-    Result := 'A instalação do componente .NET 8 da Microsoft falhou (código ' +
+    Result := 'A instalação do .NET Framework 4.8 da Microsoft falhou (código ' +
               IntToStr(CodigoSaida) + ').' + #13#10#13#10 +
-              'Instale manualmente o ".NET Desktop Runtime 8" pelo site da Microsoft e rode este instalador de novo.';
+              'Instale manualmente o ".NET Framework 4.8" pelo site da Microsoft e rode este instalador de novo.';
     Exit;
   end;
 end;

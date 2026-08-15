@@ -89,7 +89,8 @@ namespace PdvPadaria.Services
                 {
                     response.EnsureSuccessStatusCode();
                     var bytes = await response.Content.ReadAsByteArrayAsync();
-                    await File.WriteAllBytesAsync(tempPath, bytes);
+                    // File.WriteAllBytesAsync não existe no .NET Framework 4.8.
+                    await Task.Run(() => File.WriteAllBytes(tempPath, bytes));
                 }
 
                 var psi = new ProcessStartInfo

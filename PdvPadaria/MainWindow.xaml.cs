@@ -401,8 +401,8 @@ namespace PdvPadaria
             if (!string.IsNullOrWhiteSpace(filtro))
             {
                 lista = _etqTodos.Where(v =>
-                    v.Name.Contains(filtro, StringComparison.OrdinalIgnoreCase) ||
-                    (v.Produto.Barcode ?? "").Contains(filtro, StringComparison.OrdinalIgnoreCase));
+                    ContemIgnorandoCaixa(v.Name, filtro) ||
+                    ContemIgnorandoCaixa(v.Produto.Barcode, filtro));
             }
             EtqProductsList.ItemsSource = lista.ToList();
         }
@@ -839,6 +839,16 @@ namespace PdvPadaria
             {
                 MessageBox.Show($"Erro ao buscar pão: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        // Busca "contém" sem diferenciar maiúscula/minúscula. O .NET Framework 4.8 não tem
+        // a sobrecarga string.Contains(string, StringComparison) — só o .NET moderno tem —
+        // então usamos IndexOf, que existe nos dois e faz exatamente a mesma coisa.
+        private static bool ContemIgnorandoCaixa(string? texto, string? busca)
+        {
+            if (string.IsNullOrEmpty(busca)) return true;
+            if (string.IsNullOrEmpty(texto)) return false;
+            return texto!.IndexOf(busca, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool TryParseDouble(string text, out double value)
@@ -1725,7 +1735,10 @@ namespace PdvPadaria
                 }
 
                 string filePath = Path.Combine(appDataPath, $"cupom_{saleId}.txt");
-                await File.WriteAllTextAsync(filePath, cupom.ToString(), System.Text.Encoding.UTF8);
+                // File.WriteAllTextAsync não existe no .NET Framework 4.8: grava fora da
+                // thread de UI com Task.Run para não travar o caixa.
+                string conteudoCupom = cupom.ToString();
+                await Task.Run(() => File.WriteAllText(filePath, conteudoCupom, System.Text.Encoding.UTF8));
 
                 System.Diagnostics.Debug.WriteLine($"[Cupom Impresso]: {filePath}");
             }
@@ -1935,7 +1948,7 @@ namespace PdvPadaria
                 var categoryMap = categories.ToDictionary(c => c.Id, c => c.Name);
 
                 var views = products
-                    .Where(p => string.IsNullOrEmpty(filter) || p.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                    .Where(p => string.IsNullOrEmpty(filter) || ContemIgnorandoCaixa(p.Name, filter))
                     .Select(p => new StockProductView
                     {
                         Id = p.Id,
