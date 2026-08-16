@@ -6,6 +6,18 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8099", "--directory", "docs"],
       "port": 8099
+    },
+    {
+      "name": "site-download",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8137", "--directory", "PdvPadaria/site"],
+      "port": 8137
+    },
+    {
+      "name": "landing-sylvia",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "3456", "--directory", "C:\\Users\\Marcelo\\Desktop\\landing-dra-sylvia"],
+      "port": 3456
     }
   ]
 }

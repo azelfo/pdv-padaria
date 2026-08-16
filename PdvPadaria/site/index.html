@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDV Padaria Venâncio — Download</title>
+<meta name="description" content="Baixe o instalador do PDV da Padaria Venâncio para Windows.">
+<link rel="icon" href="favicon.ico">
+<style>
+  :root{
+    --marrom:#4A2318;
+    --marrom-claro:#6B3A28;
+    --ouro:#F5B731;
+    --ouro-escuro:#D99A16;
+    --creme:#FBF6EC;
+    --texto:#3A2118;
+    --texto-suave:#7A6355;
+    --aviso-fundo:#FFF8E8;
+    --aviso-borda:#E8C97A;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    background:var(--creme);
+    color:var(--texto);
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+    line-height:1.5;
+  }
+  .cartao{
+    width:100%;
+    max-width:560px;
+    background:#fff;
+    border-radius:24px;
+    padding:48px 40px 36px;
+    text-align:center;
+    box-shadow:0 24px 60px rgba(74,35,24,.14);
+    border:1px solid rgba(74,35,24,.08);
+  }
+  .logo{width:100%;max-width:300px;height:auto;margin:0 auto 28px;display:block}
+  h1{
+    font-size:1.5rem;
+    color:var(--marrom);
+    letter-spacing:-.01em;
+    margin-bottom:8px;
+  }
+  .subtitulo{color:var(--texto-suave);font-size:1rem;margin-bottom:32px}
+  .botao{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:12px;
+    width:100%;
+    padding:20px 24px;
+    background:var(--ouro);
+    color:var(--marrom);
+    font-size:1.15rem;
+    font-weight:700;
+    text-decoration:none;
+    border-radius:14px;
+    border:none;
+    cursor:pointer;
+    transition:transform .12s ease, box-shadow .12s ease, background .12s ease;
+    box-shadow:0 8px 20px rgba(217,154,22,.35);
+  }
+  .botao:hover{background:var(--ouro-escuro);transform:translateY(-2px);box-shadow:0 12px 26px rgba(217,154,22,.42)}
+  .botao:active{transform:translateY(0);box-shadow:0 6px 14px rgba(217,154,22,.35)}
+  .botao:focus-visible{outline:3px solid var(--marrom);outline-offset:3px}
+  .botao svg{width:24px;height:24px;flex:none}
+  .meta{
+    margin-top:16px;
+    font-size:.875rem;
+    color:var(--texto-suave);
+  }
+
+  /* Bloco de aviso para Windows 7 / 8.1 */
+  .aviso{
+    margin-top:32px;
+    padding:20px;
+    background:var(--aviso-fundo);
+    border:1px solid var(--aviso-borda);
+    border-radius:14px;
+    text-align:left;
+  }
+  .aviso-titulo{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    color:var(--marrom);
+    font-weight:700;
+    font-size:1rem;
+    margin-bottom:10px;
+  }
+  .aviso p{font-size:.9rem;color:var(--texto);margin-bottom:12px}
+  .passo{
+    display:flex;
+    gap:12px;
+    align-items:flex-start;
+    margin-bottom:12px;
+    font-size:.9rem;
+  }
+  .passo-num{
+    flex:none;
+    width:24px;
+    height:24px;
+    border-radius:50%;
+    background:var(--marrom);
+    color:#fff;
+    font-size:.8rem;
+    font-weight:700;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    margin-top:1px;
+  }
+  .botao-secundario{
+    display:inline-block;
+    margin-top:6px;
+    padding:11px 18px;
+    background:#fff;
+    color:var(--marrom);
+    border:2px solid var(--marrom);
+    border-radius:10px;
+    font-size:.9rem;
+    font-weight:700;
+    text-decoration:none;
+  }
+  .botao-secundario:hover{background:var(--marrom);color:#fff}
+  .cuidado{
+    margin-top:10px;
+    padding:10px 12px;
+    background:#fff;
+    border-left:3px solid #D9534F;
+    border-radius:6px;
+    font-size:.82rem;
+    color:var(--texto);
+  }
+
+  .requisitos{
+    margin-top:28px;
+    padding-top:24px;
+    border-top:1px solid rgba(74,35,24,.1);
+    font-size:.875rem;
+    color:var(--texto-suave);
+    text-align:left;
+  }
+  .requisitos strong{color:var(--marrom);display:block;margin-bottom:8px;font-size:.9rem}
+  .requisitos li{margin-left:18px;margin-bottom:4px}
+  .rodape{margin-top:28px;font-size:.8rem;color:var(--texto-suave)}
+  @media (max-width:480px){
+    .cartao{padding:36px 24px 28px;border-radius:20px}
+    h1{font-size:1.3rem}
+    .botao{font-size:1.05rem;padding:18px 20px}
+  }
+</style>
+</head>
+<body>
+  <main class="cartao">
+    <img class="logo" src="logo.png" alt="Padaria Venâncio">
+
+    <h1>PDV — Padaria Venâncio</h1>
+    <p class="subtitulo">Sistema de frente de caixa para Windows</p>
+
+    <a class="botao" href="Setup_PadariaVenancio.exe" download>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      Baixar instalador
+    </a>
+
+    <p class="meta">Versão 1.1.0 &middot; Windows &middot; 3,8 MB</p>
+
+    <!-- Windows 7 / 8.1 precisam instalar o .NET Framework antes. O instalador do PDV
+         não consegue baixá-lo sozinho nessas versões (elas usam TLS 1.0 e o site da
+         Microsoft exige TLS 1.2), mas pelo navegador o download funciona normalmente. -->
+    <section class="aviso">
+      <div class="aviso-titulo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        Seu computador é Windows 7 ou 8.1?
+      </div>
+      <p>Nessas versões é preciso instalar um componente da Microsoft <strong>antes</strong> do PDV. Faça uma vez só, nesta ordem:</p>
+
+      <div class="passo">
+        <span class="passo-num">1</span>
+        <div>
+          <strong>Instale o .NET Framework 4.8</strong> (componente da Microsoft, cerca de 115 MB).<br>
+          <a class="botao-secundario" href="https://go.microsoft.com/fwlink/?linkid=2088631">Baixar do site da Microsoft</a>
+          <div class="cuidado">
+            <strong>Atenção:</strong> use apenas este botão. Não baixe o arquivo chamado
+            <em>“Language Pack”</em> ou <em>“Português do Brasil”</em> — esse serve só para traduzir
+            as mensagens e não instala o componente.
+          </div>
+        </div>
+      </div>
+
+      <div class="passo">
+        <span class="passo-num">2</span>
+        <div>Reinicie o computador, se o instalador da Microsoft pedir.</div>
+      </div>
+
+      <div class="passo">
+        <span class="passo-num">3</span>
+        <div>Aí sim, baixe e instale o PDV no botão amarelo acima.</div>
+      </div>
+    </section>
+
+    <div class="requisitos">
+      <strong>Antes de instalar</strong>
+      <ul>
+        <li>Windows 7 SP1, 8.1, 10 ou 11</li>
+        <li>Windows 8 “puro” não funciona — atualize gratuitamente para o 8.1</li>
+        <li>Peça ao Windows para executar como administrador</li>
+        <li>Se aparecer aviso do Windows Defender, clique em “Mais informações” e depois “Executar assim mesmo”</li>
+      </ul>
+    </div>
+
+    <p class="rodape">Padaria Venâncio</p>
+  </main>
+</body>
+</html>
