@@ -185,10 +185,26 @@
         </svg>
         Seu computador é Windows 7 ou 8.1?
       </div>
-      <p>Nessas versões é preciso instalar um componente da Microsoft <strong>antes</strong> do PDV. Faça uma vez só, nesta ordem:</p>
+      <p>Nessas versões é preciso preparar o computador <strong>antes</strong> de instalar o PDV.
+         Faça uma vez só, <strong>nesta ordem</strong>:</p>
 
       <div class="passo">
         <span class="passo-num">1</span>
+        <div>
+          <strong>Atualização de segurança do Windows (KB4474419).</strong><br>
+          Sem ela o Windows 7 recusa os instaladores atuais da Microsoft, com a mensagem
+          <em>“certificado raiz que não é confiável”</em>.<br>
+          <a class="botao-secundario" href="http://download.windowsupdate.com/c/msdownload/update/software/secu/2019/09/windows6.1-kb4474419-v3-x64_b5614c6cea5cb4e198717789633dca16308ef79c.msu">Baixar (Windows 64 bits)</a>
+          <a class="botao-secundario" href="https://www.catalog.update.microsoft.com/search.aspx?q=4474419">Windows 32 bits</a>
+          <div class="cuidado">
+            Para saber se o seu é 32 ou 64 bits: <strong>Painel de Controle → Sistema</strong>,
+            e veja em <em>“Tipo de sistema”</em>. Depois de instalar, <strong>reinicie o computador</strong>.
+          </div>
+        </div>
+      </div>
+
+      <div class="passo">
+        <span class="passo-num">2</span>
         <div>
           <strong>Instale o .NET Framework 4.8</strong> (componente da Microsoft, cerca de 115 MB).<br>
           <a class="botao-secundario" href="https://go.microsoft.com/fwlink/?linkid=2088631">Baixar do site da Microsoft</a>
@@ -201,12 +217,12 @@
       </div>
 
       <div class="passo">
-        <span class="passo-num">2</span>
+        <span class="passo-num">3</span>
         <div>Reinicie o computador, se o instalador da Microsoft pedir.</div>
       </div>
 
       <div class="passo">
-        <span class="passo-num">3</span>
+        <span class="passo-num">4</span>
         <div>Aí sim, baixe e instale o PDV no botão amarelo acima.</div>
       </div>
     </section>
