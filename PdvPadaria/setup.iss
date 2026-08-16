@@ -1,5 +1,22 @@
 ; Script de Instalação do Inno Setup para o PDV Padaria Venâncio
-; Desenvolvido para empacotar a aplicação WPF compilada (.NET 8.0)
+; Aplicação WPF em .NET Framework 4.8 (roda em Windows 7 SP1, 8.1, 10 e 11)
+;
+; Este mesmo arquivo gera DOIS instaladores:
+;   ISCC setup.iss            -> Setup_PadariaVenancio.exe (pequeno, ~4 MB)
+;                                Baixa o .NET Framework 4.8 se faltar. Usado pelo
+;                                auto-update, onde a máquina já tem o componente.
+;   ISCC /DOFFLINE setup.iss  -> Setup_PadariaVenancio_Completo.exe (~120 MB)
+;                                Traz o .NET Framework 4.8 embutido. Necessário no
+;                                Windows 7/8.1, onde o download falha: o WinHTTP
+;                                dessas versões ainda usa TLS 1.0 e o site da
+;                                Microsoft exige TLS 1.2.
+
+#ifdef OFFLINE
+  #define NomeSaida "Setup_PadariaVenancio_Completo"
+  #define ArquivoNetFx "NDP48-x86-x64-AllOS-ENU.exe"
+#else
+  #define NomeSaida "Setup_PadariaVenancio"
+#endif
 
 [Setup]
 AppId={{C6F2A3F4-5987-45CC-AB1B-7AA8D4D4A994}
@@ -15,7 +32,7 @@ SetupIconFile=d:\PDV\PdvPadaria\Resources\app.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-OutputBaseFilename=Setup_PadariaVenancio
+OutputBaseFilename={#NomeSaida}
 ; Permite instalação administrativa ou por usuário comum
 PrivilegesRequired=admin
 ; Auto-update (UpdateService.cs): fecha o PDV se estiver aberto ao sobrescrever os arquivos
@@ -32,6 +49,11 @@ Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\PdvPadaria.exe"; DestDir: "
 ; Todas as dependências geradas pelo Publish (DLLs, configurações, .env)
 Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Nota: Ajuste os caminhos acima se utilizar a publicação com RID específico (ex: \publish\win-x64\)
+#ifdef OFFLINE
+; .NET Framework 4.8 embutido (só na versão Completo). "dontcopy" = fica dentro do
+; instalador e só é extraído para a pasta temporária quando realmente faltar.
+Source: "d:\PDV\PdvPadaria\redist\{#ArquivoNetFx}"; Flags: dontcopy noencryption
+#endif
 
 [InstallDelete]
 ; Restos da versão anterior, que rodava em .NET 8 e usava outro layout de arquivos.
@@ -136,16 +158,35 @@ begin
   if NetFramework48Instalado() then
     Exit;
 
+  WizardForm.PreparingLabel.Caption :=
+    'Instalando o componente .NET Framework 4.8 da Microsoft. Isso leva alguns minutos ' +
+    'e acontece apenas nesta primeira vez.';
+
+#ifdef OFFLINE
+  // Versão Completo: o componente vem dentro do instalador, não depende de internet.
+  try
+    ExtractTemporaryFile('{#ArquivoNetFx}');
+  except
+    Result := 'Não foi possível preparar o componente .NET Framework 4.8 que vem junto com este instalador.';
+    Exit;
+  end;
+  Instalador := ExpandConstant('{tmp}\{#ArquivoNetFx}');
+#else
+  // Versão pequena: baixa da Microsoft. No Windows 7/8.1 isso costuma FALHAR porque o
+  // WinHTTP dessas versões usa TLS 1.0 e o site da Microsoft exige TLS 1.2 — por isso a
+  // mensagem abaixo aponta para o instalador Completo em vez de só pedir para tentar de novo.
   try
     DownloadTemporaryFile(URL_NETFX48, 'ndp48-instalador.exe', '', nil);
   except
-    Result := 'O PDV precisa do componente ".NET Framework 4.8" da Microsoft, que ainda não está ' +
-              'instalado neste computador, e não foi possível baixá-lo agora.' + #13#10#13#10 +
-              'Verifique a conexão com a internet e tente novamente.';
+    Result := 'Este computador ainda não tem o componente ".NET Framework 4.8" da Microsoft, ' +
+              'e não foi possível baixá-lo automaticamente.' + #13#10#13#10 +
+              'Isso é normal no Windows 7 e 8.1.' + #13#10#13#10 +
+              'Use o instalador "Setup_PadariaVenancio_Completo.exe", que já traz esse ' +
+              'componente embutido e não precisa de download.';
     Exit;
   end;
-
   Instalador := ExpandConstant('{tmp}\ndp48-instalador.exe');
+#endif
 
   if not Exec(Instalador, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, CodigoSaida) then
   begin

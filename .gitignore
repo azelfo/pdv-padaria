@@ -52,3 +52,6 @@ next-env.d.ts
 # Pasta de trabalho temporaria (contem segredos: tokens, anon key)
 scratch/
 graphify-out/
+
+# Instalador do .NET Framework 4.8 embutido no setup offline (116MB - baixado localmente)
+PdvPadaria/redist/
