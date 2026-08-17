@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -822,23 +822,104 @@ namespace PdvPadaria
             try
             {
                 var connection = App.Database.GetConnection();
-                var bread = await connection.Table<Product>()
+                var paes = await connection.Table<Product>()
                     .Where(p => p.Type == "PAO_FRANCES" && p.Active)
-                    .FirstOrDefaultAsync();
+                    .ToListAsync();
+                paes = paes.OrderBy(p => p.Name).ToList();
 
-                if (bread != null)
+                if (paes.Count == 0)
                 {
-                    PromptPaoFrances(bread);
+                    MessageBox.Show(
+                        "Nenhum pão cadastrado.\n\nCadastre o produto em Estoque e escolha o tipo \"Pão\" para ele aparecer aqui.",
+                        "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
                 }
-                else
+
+                // Com um pão só, vai direto (mantém a agilidade do caixa). Com mais de um,
+                // pergunta qual — antes pegava sempre o primeiro e os demais eram inacessíveis.
+                if (paes.Count == 1)
                 {
-                    MessageBox.Show("Configuração de Pão Francês não encontrada.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    PromptPaoFrances(paes[0]);
+                    return;
                 }
+
+                var escolhido = EscolherPao(paes);
+                if (escolhido != null) PromptPaoFrances(escolhido);
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Erro ao buscar pão: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        // Pergunta qual pão usar quando existe mais de um cadastrado. Operável só pelo
+        // teclado (setas + Enter, ou o número do item) para não atrasar o caixa.
+        private Product? EscolherPao(List<Product> paes)
+        {
+            Product? escolhido = null;
+
+            var janela = new Window
+            {
+                Title = "Qual pão?",
+                Width = 420,
+                SizeToContent = SizeToContent.Height,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                WindowStyle = WindowStyle.ToolWindow,
+                Background = AppColors.Surface,
+                Foreground = AppColors.TextPrimary
+            };
+
+            var stack = new StackPanel { Margin = new Thickness(20) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = "Escolha o pão (setas e Enter, ou digite o número)",
+                Foreground = AppColors.TextMuted,
+                FontSize = 12,
+                Margin = new Thickness(0, 0, 0, 10)
+            });
+
+            var lista = new ListBox
+            {
+                Background = AppColors.BgBase,
+                Foreground = AppColors.TextPrimary,
+                BorderBrush = AppColors.BorderSoft,
+                FontSize = 15,
+                MaxHeight = 260
+            };
+            for (int i = 0; i < paes.Count; i++)
+                lista.Items.Add($"{i + 1}. {paes[i].Name}   —   R$ {paes[i].PriceSale / 100.0:F2}");
+            lista.SelectedIndex = 0;
+            stack.Children.Add(lista);
+
+            void Confirmar()
+            {
+                if (lista.SelectedIndex >= 0 && lista.SelectedIndex < paes.Count)
+                    escolhido = paes[lista.SelectedIndex];
+                janela.Close();
+            }
+
+            lista.MouseDoubleClick += (s, e) => Confirmar();
+            janela.PreviewKeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter) { e.Handled = true; Confirmar(); }
+                else if (e.Key == Key.Escape) { e.Handled = true; janela.Close(); }
+                else if (e.Key >= Key.D1 && e.Key <= Key.D9)
+                {
+                    int idx = e.Key - Key.D1;
+                    if (idx < paes.Count) { e.Handled = true; lista.SelectedIndex = idx; Confirmar(); }
+                }
+                else if (e.Key >= Key.NumPad1 && e.Key <= Key.NumPad9)
+                {
+                    int idx = e.Key - Key.NumPad1;
+                    if (idx < paes.Count) { e.Handled = true; lista.SelectedIndex = idx; Confirmar(); }
+                }
+            };
+
+            janela.Content = stack;
+            janela.Loaded += (s, e) => lista.Focus();
+            janela.ShowDialog();
+            return escolhido;
         }
 
         // Busca "contém" sem diferenciar maiúscula/minúscula. O .NET Framework 4.8 não tem
@@ -1264,22 +1345,6 @@ namespace PdvPadaria
             _totalCentavos = Math.Max(0, _subtotalCentavos - _discountCentavos);
 
             TotalText.Text = $"R$ {_totalCentavos / 100.0:F2}";
-        }
-
-        private void ApplyDiscount_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button btn && btn.Tag is string valStr && int.TryParse(valStr, out int discountVal))
-            {
-                _discountCentavos += discountVal;
-                UpdateTotals();
-            }
-        }
-
-        // Método PaymentMethod_Click removido (substituído por seleção automática de abas no TabControl)
-
-        private void FinishSaleButton_Click(object sender, RoutedEventArgs e)
-        {
-            FinishSaleFlow();
         }
 
         private async void FinishSaleFlow()
@@ -2956,7 +3021,30 @@ namespace PdvPadaria
             };
 
             stack.Children.Add(createField("Categoria", cmbCategoria));
+
+            // Tipo do produto ESCOLHIDO pelo usuário. Antes era deduzido do nome da categoria,
+            // o que tornava impossível cadastrar um pão: o tipo PAO_FRANCES nunca era gerado e
+            // o atalho de pão do caixa (F4) não encontrava o produto recém-criado.
+            var cmbTipoProduto = new ComboBox { Background = System.Windows.Media.Brushes.White, Foreground = System.Windows.Media.Brushes.Black, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
+            cmbTipoProduto.Items.Add(new ComboBoxItem { Content = "Mercadoria (revenda)", Tag = "NORMAL" });
+            cmbTipoProduto.Items.Add(new ComboBoxItem { Content = "Produção própria (bolo, salgado, torta)", Tag = "PRODUCAO" });
+            cmbTipoProduto.Items.Add(new ComboBoxItem { Content = "Pão (vendido por valor, tecla F4)", Tag = "PAO_FRANCES" });
+            cmbTipoProduto.SelectedIndex = 0;
+            stack.Children.Add(createField("Tipo do produto", cmbTipoProduto));
+
             stack.Children.Add(createField("Unidade de Medida", cmbUnidade));
+
+            // Ajuda o operador: ao escolher "Produção Própria" na categoria, sugere o tipo
+            // correspondente. Continua sendo só uma sugestão — a escolha final é do usuário.
+            cmbCategoria.SelectionChanged += (s, ev) =>
+            {
+                var cat = (cmbCategoria.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
+                bool ehProducao = cat.ToLower().Contains("produ");
+                // Não mexe se o usuário já marcou "Pão" de propósito.
+                var tipoAtual = (cmbTipoProduto.SelectedItem as ComboBoxItem)?.Tag as string;
+                if (tipoAtual == "PAO_FRANCES") return;
+                cmbTipoProduto.SelectedIndex = ehProducao ? 1 : 0;
+            };
 
             var pricesGrid = new Grid { Margin = new Thickness(0, 0, 0, 15) };
             pricesGrid.ColumnDefinitions.Add(new ColumnDefinition());
@@ -3030,8 +3118,10 @@ namespace PdvPadaria
                 string catId = catItem?.Tag as string ?? "";
                 string catNome = catItem?.Content?.ToString() ?? "";
                 if (string.IsNullOrEmpty(catId)) { MessageBox.Show("Selecione uma categoria.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
-                // tipo derivado da categoria (Produção Própria => produção; senão mercadoria normal)
-                string tipo = catNome.ToLower().Contains("produ") ? "PRODUCAO" : "NORMAL";
+                // O tipo vem da ESCOLHA do usuário, não mais deduzido da categoria. Deduzir
+                // impossibilitava cadastrar pão (o tipo PAO_FRANCES nunca era gerado), então o
+                // produto era criado mas o atalho de pão do caixa não o reconhecia.
+                string tipo = (cmbTipoProduto.SelectedItem as ComboBoxItem)?.Tag as string ?? "NORMAL";
                 string unidade = cmbUnidade.SelectedItem?.ToString() ?? "UN";
 
                 confirmBtn.IsEnabled = false; confirmBtn.Content = "Cadastrando...";
@@ -3166,6 +3256,23 @@ namespace PdvPadaria
             stack.Children.Add(createField("Nome do Produto", txtNome));
             stack.Children.Add(createField("Código de Barras", txtBarcode));
             stack.Children.Add(createField("Categoria", cmbCategoria));
+
+            // Tipo do produto, agora PRESERVADO na edição. Antes era recalculado a partir da
+            // categoria, então editar qualquer coisa de um pão o transformava em "PRODUCAO" e
+            // quebrava o atalho de pão do caixa (foi o que aconteceu com o Pão Massa Fina).
+            var cmbTipoProduto = new ComboBox { Background = System.Windows.Media.Brushes.White, Foreground = System.Windows.Media.Brushes.Black, FontSize = 14, Padding = new Thickness(6, 4, 6, 4) };
+            cmbTipoProduto.Items.Add(new ComboBoxItem { Content = "Mercadoria (revenda)", Tag = "NORMAL" });
+            cmbTipoProduto.Items.Add(new ComboBoxItem { Content = "Produção própria (bolo, salgado, torta)", Tag = "PRODUCAO" });
+            cmbTipoProduto.Items.Add(new ComboBoxItem { Content = "Pão (vendido por valor, tecla F4)", Tag = "PAO_FRANCES" });
+            foreach (ComboBoxItem it in cmbTipoProduto.Items)
+            {
+                if ((it.Tag as string) == productToEdit.Type) { cmbTipoProduto.SelectedItem = it; break; }
+            }
+            // Tipos legados que não estão na lista (ex.: SALGADO, BOLO) caem em produção própria.
+            if (cmbTipoProduto.SelectedItem == null)
+                cmbTipoProduto.SelectedIndex = (productToEdit.Type == "NORMAL") ? 0 : 1;
+            stack.Children.Add(createField("Tipo do produto", cmbTipoProduto));
+
             stack.Children.Add(createField("Unidade de Medida", cmbUnidade));
 
             var pricesGrid = new Grid { Margin = new Thickness(0, 0, 0, 12) };
@@ -3237,8 +3344,7 @@ namespace PdvPadaria
                 var unidade = cmbUnidade.SelectedItem?.ToString() ?? "UN";
                 var catItem = cmbCategoria.SelectedItem as ComboBoxItem;
                 string catId = catItem?.Tag as string ?? "";
-                string catNome = catItem?.Content?.ToString() ?? "";
-                string tipo = catNome.ToLower().Contains("produ") ? "PRODUCAO" : "NORMAL";
+                string tipo = (cmbTipoProduto.SelectedItem as ComboBoxItem)?.Tag as string ?? productToEdit.Type;
 
                 if (string.IsNullOrEmpty(name))
                 {
@@ -3504,78 +3610,6 @@ namespace PdvPadaria
 
                 // Desmarca a seleção para poder clicar de novo
                 SalesHistoryList.SelectedItem = null;
-            }
-        }
-
-        private async void CancelSaleButton_Click(object sender, RoutedEventArgs e)
-        {
-            // Visualizando histórico de outra loja: cancelamento é feito na própria loja.
-            if (!string.IsNullOrEmpty(_historyRemoteStoreId))
-            {
-                MessageBox.Show("O cancelamento de uma venda é feito no caixa da própria loja.\n" +
-                    "Aqui você apenas visualiza o histórico e os cancelamentos da loja selecionada.",
-                    "Histórico da rede", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-            if (sender is Button btn && btn.Tag is string saleId)
-            {
-                if (MessageBox.Show("Deseja realmente cancelar/estornar esta venda? O estoque dos produtos será devolvido.", "Confirmação", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-                {
-                    return;
-                }
-
-                try
-                {
-                    var connection = App.Database.GetConnection();
-                    var sale = await connection.FindAsync<Sale>(saleId);
-                    if (sale == null || sale.PaymentStatus == "CANCELADO") return;
-
-                    var saleItems = await connection.Table<SaleItem>().Where(i => i.SaleId == saleId).ToListAsync();
-
-                    await App.Database.RunInTransactionAsync((tx) =>
-                    {
-                        // 1. Marca venda como cancelada
-                        sale.PaymentStatus = "CANCELADO";
-                        sale.IsSynced = false;
-                        tx.Update(sale);
-
-                        // 2. Devolve os produtos para o estoque e registra entradas
-                        foreach (var item in saleItems)
-                        {
-                            var movement = new StockMovement
-                            {
-                                Id = Guid.NewGuid().ToString(),
-                                ProductId = item.ProductId,
-                                StoreId = sale.StoreId,
-                                UserId = CurrentUser.Id,
-                                TenantId = sale.TenantId,
-                                Type = "ENTRADA",
-                                Quantity = item.Quantity,
-                                Reason = "CANCELAMENTO_VENDA",
-                                SaleId = sale.Id,
-                                CreatedAt = DateTime.Now,
-                                IsSynced = false
-                            };
-                            tx.Insert(movement);
-
-                            var product = tx.Find<Product>(item.ProductId);
-                            if (product != null)
-                            {
-                                product.LocalStockQuantity += item.Quantity;
-                                tx.Update(product);
-                            }
-                        }
-                    });
-
-                    MessageBox.Show("Venda cancelada com sucesso! Estoque devolvido.", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
-                    LoadSalesHistory();
-
-                    _ = Task.Run(async () => await RunSincronizacaoSilenciosa());
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Erro ao cancelar venda: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
             }
         }
 

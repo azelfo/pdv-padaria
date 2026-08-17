@@ -178,3 +178,27 @@ model StockMovement {
   isSynced    Boolean  @default(false)
   syncedAt    DateTime?
 }
+
+/// Fila de ajustes de estoque feitos pelo DONO (painel web ou PDV) para uma loja.
+/// O PDV de cada loja lê esta tabela no sync e aplica cada ajuste UMA vez
+/// (controle de idempotência fica no SQLite local, tabela AppliedOwnerAdjustment).
+/// É o canal que faz o ajuste de estoque da nuvem descer para a máquina da loja.
+model OwnerStockAdjustment {
+  id        String   @id @default(uuid())
+  tenantId  String
+  storeId   String
+  productId String
+  quantity  Float
+  minStock  Float?
+  createdAt DateTime @default(now())
+  createdBy String?
+}
+
+/// Token secreto por loja, usado pelo PDV para autorizar a escrita de vendas e
+/// estoque na nuvem (RPCs push_vendas / push_estoque). Guarda apenas o HASH do
+/// token — o valor em claro fica no .env da máquina da loja (STORE_SYNC_TOKEN).
+model store_sync_secret {
+  storeId    String   @id
+  token_hash String
+  updatedAt  DateTime @default(now())
+}
