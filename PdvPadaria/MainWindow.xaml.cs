@@ -835,91 +835,14 @@ namespace PdvPadaria
                     return;
                 }
 
-                // Com um pão só, vai direto (mantém a agilidade do caixa). Com mais de um,
-                // pergunta qual — antes pegava sempre o primeiro e os demais eram inacessíveis.
-                if (paes.Count == 1)
-                {
-                    PromptPaoFrances(paes[0]);
-                    return;
-                }
-
-                var escolhido = EscolherPao(paes);
-                if (escolhido != null) PromptPaoFrances(escolhido);
+                // A própria janela de lançamento já lista os pães em botões (e aceita as teclas
+                // 1..N), então não existe passo intermediário de escolha: abre direto nela.
+                PromptPaoFrances(paes[0]);
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Erro ao buscar pão: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
             }
-        }
-
-        // Pergunta qual pão usar quando existe mais de um cadastrado. Operável só pelo
-        // teclado (setas + Enter, ou o número do item) para não atrasar o caixa.
-        private Product? EscolherPao(List<Product> paes)
-        {
-            Product? escolhido = null;
-
-            var janela = new Window
-            {
-                Title = "Qual pão?",
-                Width = 420,
-                SizeToContent = SizeToContent.Height,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Owner = this,
-                WindowStyle = WindowStyle.ToolWindow,
-                Background = AppColors.Surface,
-                Foreground = AppColors.TextPrimary
-            };
-
-            var stack = new StackPanel { Margin = new Thickness(20) };
-            stack.Children.Add(new TextBlock
-            {
-                Text = "Escolha o pão (setas e Enter, ou digite o número)",
-                Foreground = AppColors.TextMuted,
-                FontSize = 12,
-                Margin = new Thickness(0, 0, 0, 10)
-            });
-
-            var lista = new ListBox
-            {
-                Background = AppColors.BgBase,
-                Foreground = AppColors.TextPrimary,
-                BorderBrush = AppColors.BorderSoft,
-                FontSize = 15,
-                MaxHeight = 260
-            };
-            for (int i = 0; i < paes.Count; i++)
-                lista.Items.Add($"{i + 1}. {paes[i].Name}   —   R$ {paes[i].PriceSale / 100.0:F2}");
-            lista.SelectedIndex = 0;
-            stack.Children.Add(lista);
-
-            void Confirmar()
-            {
-                if (lista.SelectedIndex >= 0 && lista.SelectedIndex < paes.Count)
-                    escolhido = paes[lista.SelectedIndex];
-                janela.Close();
-            }
-
-            lista.MouseDoubleClick += (s, e) => Confirmar();
-            janela.PreviewKeyDown += (s, e) =>
-            {
-                if (e.Key == Key.Enter) { e.Handled = true; Confirmar(); }
-                else if (e.Key == Key.Escape) { e.Handled = true; janela.Close(); }
-                else if (e.Key >= Key.D1 && e.Key <= Key.D9)
-                {
-                    int idx = e.Key - Key.D1;
-                    if (idx < paes.Count) { e.Handled = true; lista.SelectedIndex = idx; Confirmar(); }
-                }
-                else if (e.Key >= Key.NumPad1 && e.Key <= Key.NumPad9)
-                {
-                    int idx = e.Key - Key.NumPad1;
-                    if (idx < paes.Count) { e.Handled = true; lista.SelectedIndex = idx; Confirmar(); }
-                }
-            };
-
-            janela.Content = stack;
-            janela.Loaded += (s, e) => lista.Focus();
-            janela.ShowDialog();
-            return escolhido;
         }
 
         // Busca "contém" sem diferenciar maiúscula/minúscula. O .NET Framework 4.8 não tem
@@ -1035,59 +958,70 @@ namespace PdvPadaria
             };
 
             var stack = new StackPanel { Margin = new Thickness(25) };
-            
-            var variationLabel = new TextBlock { Text = "Selecione a Variação do Pão:", Margin = new Thickness(0, 0, 0, 10), Foreground = AppColors.TextMuted, FontSize = 15, FontWeight = FontWeights.Bold };
-            
-            string selectedVariationCode = bread.Id == "prod-pao-massa-fina" ? "MASSA_FINA" : "CARIOCA";
 
-            var btnCarioca = new Button 
-            { 
-                Content = "Pão Carioca", 
-                Padding = new Thickness(15, 12, 15, 12),
-                Background = new System.Windows.Media.SolidColorBrush(selectedVariationCode == "CARIOCA" ? AppColors.AccentColor : AppColors.BorderSoftColor),
-                Foreground = selectedVariationCode == "CARIOCA" ? AppColors.BgBase : System.Windows.Media.Brushes.White,
-                FontSize = 16,
-                FontWeight = FontWeights.Bold,
-                Cursor = Cursors.Hand
-            };
-            btnCarioca.Resources.Add(typeof(Border), new Style(typeof(Border)) { Setters = { new Setter(Border.CornerRadiusProperty, new CornerRadius(6)) } });
+            // Os botões de variação são montados a partir dos pães REALMENTE cadastrados.
+            // Antes eram dois botões fixos no código ("Pão Carioca" / "Pão Massa Fina") com
+            // ids chumbados, então um terceiro pão cadastrado nunca apareceria aqui.
+            List<Product> paes;
+            try
+            {
+                var conn = App.Database.GetConnection();
+                var lista = await conn.Table<Product>().Where(p => p.Type == "PAO_FRANCES" && p.Active).ToListAsync();
+                paes = lista.OrderBy(p => p.Name).ToList();
+            }
+            catch
+            {
+                paes = new List<Product>();
+            }
+            if (paes.Count == 0) paes = new List<Product> { bread };
 
-            var btnMassaFina = new Button 
-            { 
-                Content = "Pão Massa Fina", 
-                Padding = new Thickness(15, 12, 15, 12),
-                Background = new System.Windows.Media.SolidColorBrush(selectedVariationCode == "MASSA_FINA" ? AppColors.AccentColor : AppColors.BorderSoftColor),
-                Foreground = selectedVariationCode == "MASSA_FINA" ? AppColors.BgBase : System.Windows.Media.Brushes.White,
-                FontSize = 16,
-                FontWeight = FontWeights.Bold,
-                Cursor = Cursors.Hand
+            var variationLabel = new TextBlock
+            {
+                Text = paes.Count > 1 ? "Selecione o pão (ou tecle o número):" : "Pão:",
+                Margin = new Thickness(0, 0, 0, 10),
+                Foreground = AppColors.TextMuted,
+                FontSize = 15,
+                FontWeight = FontWeights.Bold
             };
-            btnMassaFina.Resources.Add(typeof(Border), new Style(typeof(Border)) { Setters = { new Setter(Border.CornerRadiusProperty, new CornerRadius(6)) } });
+
+            var paoSelecionado = paes.FirstOrDefault(p => p.Id == bread.Id) ?? paes[0];
 
             var buttonsGrid = new Grid { Margin = new Thickness(0, 0, 0, 20) };
-            buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
-            buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            Grid.SetColumn(btnCarioca, 0);
-            Grid.SetColumn(btnMassaFina, 2);
-            buttonsGrid.Children.Add(btnCarioca);
-            buttonsGrid.Children.Add(btnMassaFina);
+            var botoes = new List<Button>();
 
-            btnCarioca.Click += (s, ev) => {
-                selectedVariationCode = "CARIOCA";
-                btnCarioca.Background = AppColors.Accent;
-                btnCarioca.Foreground = AppColors.BgBase;
-                btnMassaFina.Background = AppColors.BorderSoft;
-                btnMassaFina.Foreground = System.Windows.Media.Brushes.White;
-            };
+            void PintarSelecionado()
+            {
+                for (int i = 0; i < botoes.Count; i++)
+                {
+                    bool sel = paes[i].Id == paoSelecionado.Id;
+                    botoes[i].Background = sel ? AppColors.Accent : AppColors.BorderSoft;
+                    botoes[i].Foreground = sel ? AppColors.BgBase : System.Windows.Media.Brushes.White;
+                }
+            }
 
-            btnMassaFina.Click += (s, ev) => {
-                selectedVariationCode = "MASSA_FINA";
-                btnMassaFina.Background = AppColors.Accent;
-                btnMassaFina.Foreground = AppColors.BgBase;
-                btnCarioca.Background = AppColors.BorderSoft;
-                btnCarioca.Foreground = System.Windows.Media.Brushes.White;
-            };
+            for (int i = 0; i < paes.Count; i++)
+            {
+                if (i > 0) buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
+                buttonsGrid.ColumnDefinitions.Add(new ColumnDefinition());
+
+                var pao = paes[i];
+                var btn = new Button
+                {
+                    // O número na frente combina com a tecla de atalho (1, 2, 3...).
+                    Content = paes.Count > 1 ? $"{i + 1}. {pao.Name}" : pao.Name,
+                    Padding = new Thickness(15, 12, 15, 12),
+                    FontSize = 16,
+                    FontWeight = FontWeights.Bold,
+                    Cursor = Cursors.Hand
+                };
+                btn.Resources.Add(typeof(Border), new Style(typeof(Border)) { Setters = { new Setter(Border.CornerRadiusProperty, new CornerRadius(6)) } });
+                btn.Click += (s, ev) => { paoSelecionado = pao; PintarSelecionado(); };
+
+                Grid.SetColumn(btn, i * 2);
+                buttonsGrid.Children.Add(btn);
+                botoes.Add(btn);
+            }
+            PintarSelecionado();
 
             var label = new TextBlock { Text = "Digite o valor em dinheiro do pão (R$):", Margin = new Thickness(0, 0, 0, 8), Foreground = AppColors.TextMuted, FontSize = 14, FontWeight = FontWeights.SemiBold };
             var textBox = new TextBox { Padding = new Thickness(10), FontSize = 22, FontWeight = FontWeights.Bold, Background = AppColors.BgBase, Foreground = System.Windows.Media.Brushes.White, BorderBrush = AppColors.BorderSoft };
@@ -1139,25 +1073,9 @@ namespace PdvPadaria
                         return;
                     }
 
-                    string targetId = selectedVariationCode == "CARIOCA" ? "prod-pao-carioca" : "prod-pao-massa-fina";
-                    try
-                    {
-                        var conn = App.Database.GetConnection();
-                        var targetProduct = await conn.Table<Product>().Where(p => p.Id == targetId).FirstOrDefaultAsync();
-                        if (targetProduct != null)
-                        {
-                            AddBreadProductToCart(targetProduct, val, totalDePaes, selectedVariationCode);
-                        }
-                        else
-                        {
-                            AddBreadProductToCart(bread, val, totalDePaes, selectedVariationCode);
-                        }
-                    }
-                    catch
-                    {
-                        AddBreadProductToCart(bread, val, totalDePaes, selectedVariationCode);
-                    }
-                    
+                    // Usa direto o pão escolhido nos botões. Antes havia uma busca por id fixo
+                    // ("prod-pao-carioca"/"prod-pao-massa-fina"), que ignorava qualquer pão novo.
+                    AddBreadProductToCart(paoSelecionado, val, totalDePaes, paoSelecionado.Name);
                     inputWindow.Close();
                 }
                 else
@@ -1172,6 +1090,29 @@ namespace PdvPadaria
                     button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 }
             };
+
+            // Teclas 1..9 escolhem o pão sem tirar a mão do teclado. O foco fica no campo de
+            // valor, então o atalho é tratado no PreviewKeyDown da janela — mas só quando há
+            // mais de um pão, senão o operador não conseguiria digitar "1" no valor.
+            if (paes.Count > 1)
+            {
+                inputWindow.PreviewKeyDown += (s, ev) =>
+                {
+                    int idx = -1;
+                    if (ev.Key >= Key.D1 && ev.Key <= Key.D9) idx = ev.Key - Key.D1;
+                    else if (ev.Key >= Key.NumPad1 && ev.Key <= Key.NumPad9) idx = ev.Key - Key.NumPad1;
+
+                    // Só intercepta se o campo de valor estiver vazio; a partir daí o número
+                    // digitado é valor, não seleção de pão.
+                    if (idx >= 0 && idx < paes.Count && string.IsNullOrEmpty(textBox.Text))
+                    {
+                        ev.Handled = true;
+                        paoSelecionado = paes[idx];
+                        PintarSelecionado();
+                        textBox.Focus();
+                    }
+                };
+            }
 
             stack.Children.Add(variationLabel);
             stack.Children.Add(buttonsGrid);
