@@ -624,3 +624,30 @@ BEGIN
   RETURN json_build_object('success', true, 'codigo', v_code);
 END;
 $$;
+
+
+-- ============================================================
+-- POLITICAS DE LEITURA (RLS) DAS QUAIS O PDV DEPENDE
+--
+-- O PDV instalado nas lojas le a nuvem usando a ANON KEY, direto pela API REST.
+-- Toda tabela que ele precisa ler tem RLS ligado + uma politica "anon_read".
+-- ATENCAO: no Postgres, RLS ligado SEM nenhuma politica nao da erro -- a consulta
+-- simplesmente retorna VAZIO. Foi assim que o ajuste de estoque do dono deixou de
+-- chegar nas lojas: a tabela OwnerStockAdjustment tinha RLS sem politica, o
+-- ApplyOwnerAdjustmentsAsync recebia lista vazia, o estoque local ficava zerado e
+-- o PushStockSnapshotAsync em seguida devolvia esse zero para a nuvem, apagando o
+-- valor que o dono tinha lancado.
+--
+-- Ao criar uma tabela nova que o PDV precise LER, crie tambem a politica abaixo.
+-- A ESCRITA continua fechada para anon de proposito: quem grava sao as RPCs
+-- SECURITY DEFINER (push_vendas, push_estoque, ajustar_estoque, set_estoque_loja).
+-- ============================================================
+
+-- Tabelas lidas pelo PDV (PullUpdatesAsync / ApplyOwnerAdjustmentsAsync):
+--   Product, StoreProduct, Category, BreadConfig, OwnerStockAdjustment
+--
+-- Modelo da politica (executar uma vez por tabela):
+--   CREATE POLICY anon_read ON "NomeDaTabela" FOR SELECT TO anon USING (true);
+
+CREATE POLICY anon_read ON "OwnerStockAdjustment"
+  FOR SELECT TO anon USING (true);
