@@ -1540,6 +1540,14 @@ namespace PdvPadaria
                             Type = item.ProductType
                         };
 
+                        // Lê o produto ANTES de baixar, para gravar o saldo anterior e o final
+                        // no movimento (histórico auditável sem precisar recalcular depois).
+                        var product = tx.Find<Product>(item.ProductId);
+                        double? saldoAntes = product?.LocalStockQuantity;
+                        double? saldoDepois = product != null
+                            ? Math.Max(0, product.LocalStockQuantity - item.Quantity)
+                            : (double?)null;
+
                         var stockMovement = new StockMovement
                         {
                             Id = Guid.NewGuid().ToString(),
@@ -1552,16 +1560,17 @@ namespace PdvPadaria
                             Reason = "VENDA",
                             SaleId = saleId,
                             CreatedAt = DateTime.Now,
-                            IsSynced = false
+                            IsSynced = false,
+                            BalanceBefore = saldoAntes,
+                            BalanceAfter = saldoDepois
                         };
 
                         tx.Insert(saleItem);
                         tx.Insert(stockMovement);
 
-                        var product = tx.Find<Product>(item.ProductId);
                         if (product != null)
                         {
-                            product.LocalStockQuantity = Math.Max(0, product.LocalStockQuantity - item.Quantity);
+                            product.LocalStockQuantity = saldoDepois!.Value;
                             tx.Update(product);
                         }
                     }
@@ -2374,7 +2383,9 @@ namespace PdvPadaria
                                     Quantity = diff,
                                     Reason = "AJUSTE_MANUAL",
                                     CreatedAt = DateTime.Now,
-                                    IsSynced = false
+                                    IsSynced = false,
+                                    BalanceBefore = oldQty,
+                                    BalanceAfter = newQty
                                 };
 
                                 await App.Database.RunInTransactionAsync((tx) =>

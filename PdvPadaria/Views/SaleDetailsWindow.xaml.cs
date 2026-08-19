@@ -227,6 +227,11 @@ namespace PdvPadaria.Views
                     // 2. Devolve os produtos para o estoque e registra entradas
                     foreach (var item in saleItems)
                     {
+                        // Lê o produto antes de devolver, para registrar saldo anterior/final
+                        var product = tx.Find<Product>(item.ProductId);
+                        double? saldoAntes = product?.LocalStockQuantity;
+                        double? saldoDepois = saldoAntes.HasValue ? saldoAntes + item.Quantity : null;
+
                         var movement = new StockMovement
                         {
                             Id = Guid.NewGuid().ToString(),
@@ -239,14 +244,15 @@ namespace PdvPadaria.Views
                             Reason = "CANCELAMENTO_VENDA",
                             SaleId = sale.Id,
                             CreatedAt = DateTime.Now,
-                            IsSynced = false
+                            IsSynced = false,
+                            BalanceBefore = saldoAntes,
+                            BalanceAfter = saldoDepois
                         };
                         tx.Insert(movement);
 
-                        var product = tx.Find<Product>(item.ProductId);
                         if (product != null)
                         {
-                            product.LocalStockQuantity += item.Quantity;
+                            product.LocalStockQuantity = saldoDepois!.Value;
                             tx.Update(product);
                         }
                     }

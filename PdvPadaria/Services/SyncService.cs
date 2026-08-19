@@ -69,8 +69,6 @@ namespace PdvPadaria.Services
                     .Where(s => !s.IsSynced)
                     .ToList();
 
-                if (pendingSales.Count == 0) return true;
-
                 // 2. Coleta itens e movimentos relacionados
                 var salesToSend = new List<Sale>();
                 var itemsToSend = new List<SaleItem>();
@@ -90,6 +88,20 @@ namespace PdvPadaria.Services
                         .ToList();
                     movementsToSend.AddRange(movements);
                 }
+
+                // 2b. Movimentos que não vieram de venda (ajuste manual, perda, reposição)
+                //     não têm SaleId, então o laço acima nunca os alcança. Sem isto eles
+                //     ficariam IsSynced=false para sempre e o dono perderia o MOTIVO de
+                //     cada baixa — justamente o que permite conferir desvio. O saldo já
+                //     subia pelo push_estoque; o que faltava era o histórico.
+                //     SQL cru de propósito: o LINQ do sqlite-net traduz "== null" de forma
+                //     frágil, e aqui um erro silencioso significaria histórico perdido.
+                var avulsos = _dbConnection.Query<StockMovement>(
+                    "SELECT * FROM StockMovement WHERE IsSynced = 0 AND (SaleId IS NULL OR SaleId = '')");
+                movementsToSend.AddRange(avulsos);
+
+                // Nada pendente dos dois lados: encerra sem chamar a rede.
+                if (salesToSend.Count == 0 && movementsToSend.Count == 0) return true;
 
                 // 3. Envia tudo num único payload para a função RPC server-side.
                 //    push_vendas grava as 3 tabelas em uma transação (Pai -> Filhas),
@@ -116,6 +128,14 @@ namespace PdvPadaria.Services
                             m.SyncedAt = DateTime.Now;
                             _dbConnection.Update(m);
                         }
+                    }
+
+                    // Marca também os movimentos avulsos que foram no mesmo payload.
+                    foreach (var m in avulsos)
+                    {
+                        m.IsSynced = true;
+                        m.SyncedAt = DateTime.Now;
+                        _dbConnection.Update(m);
                     }
                 });
 
@@ -404,14 +424,41 @@ namespace PdvPadaria.Services
                         var prod = _dbConnection.Find<Product>(aj.ProductId);
                         if (prod != null)
                         {
+                            // O número lançado pelo dono vale para o INSTANTE em que ele lançou.
+                            // Se a loja estava offline e vendeu depois disso, essas vendas
+                            // precisam continuar descontadas — senão o ajuste "devolveria" ao
+                            // estoque itens que já saíram, quebrando a conferência de caixa.
+                            // Vendas anteriores ao lançamento NÃO são descontadas: elas já
+                            // estavam refletidas no número que o dono informou.
+                            double vendidoDepois = 0;
+                            try
+                            {
+                                vendidoDepois = _dbConnection.ExecuteScalar<double>(
+                                    @"SELECT COALESCE(SUM(si.Quantity), 0)
+                                        FROM SaleItem si
+                                        JOIN Sale s ON s.Id = si.SaleId
+                                       WHERE si.ProductId = ?
+                                         AND s.PaymentStatus = 'APROVADO'
+                                         AND s.SaleDate > ?",
+                                    aj.ProductId, aj.CreatedAt);
+                            }
+                            catch (Exception exVendas)
+                            {
+                                // Sem conseguir medir, é mais seguro aplicar o número puro do
+                                // que travar o ajuste inteiro.
+                                System.Diagnostics.Debug.WriteLine($"[Ajuste: soma de vendas falhou]: {exVendas.Message}");
+                            }
+
+                            double saldoFinal = Math.Max(0, aj.Quantity - vendidoDepois);
+
                             if (aj.MinStock.HasValue)
                                 _dbConnection.Execute(
                                     "UPDATE Product SET LocalStockQuantity=?, MinStock=? WHERE Id=?",
-                                    aj.Quantity, aj.MinStock.Value, aj.ProductId);
+                                    saldoFinal, aj.MinStock.Value, aj.ProductId);
                             else
                                 _dbConnection.Execute(
                                     "UPDATE Product SET LocalStockQuantity=? WHERE Id=?",
-                                    aj.Quantity, aj.ProductId);
+                                    saldoFinal, aj.ProductId);
                         }
 
                         _dbConnection.Insert(new AppliedOwnerAdjustment { Id = aj.Id });
@@ -483,6 +530,9 @@ namespace PdvPadaria.Services
         public string ProductId { get; set; } = string.Empty;
         public double Quantity { get; set; }
         public double? MinStock { get; set; }
+        // Momento em que o dono lançou o número. É o que permite descontar apenas as
+        // vendas ocorridas DEPOIS do lançamento (ver ApplyOwnerAdjustmentsAsync).
+        public DateTime CreatedAt { get; set; }
     }
 
     #endregion

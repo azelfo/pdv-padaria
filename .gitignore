@@ -55,3 +55,7 @@ graphify-out/
 
 # Instalador do .NET Framework 4.8 embutido no setup offline (116MB - baixado localmente)
 PdvPadaria/redist/
+
+# Instalador Completo (~119MB, com .NET embutido): acima do limite de 100MB do GitHub.
+# Gerado localmente com: ISCC /DOFFLINE setup.iss
+PdvPadaria/Output/Setup_PadariaVenancio_Completo.exe

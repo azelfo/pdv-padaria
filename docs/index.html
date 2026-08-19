@@ -203,6 +203,20 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
 .badge-status.cancelado{background:rgba(239,68,68,.15);color:var(--red-soft)}
 .badge-status.pendente{background:rgba(245,158,11,.15);color:var(--accent)}
 
+/* -------- CONFERÊNCIA DE PÃO -------- */
+.pao-row{padding:14px 2px;border-bottom:1px solid var(--line)}
+.pao-row:last-child{border-bottom:none}
+.pao-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px}
+.pao-nome{font-weight:600;font-size:15px}
+.pao-loja{font-size:12px;color:var(--muted);margin-top:2px}
+.pao-nums{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center}
+.pao-nums div span{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+.pao-nums div b{font-size:15px;font-weight:700}
+.pao-dif{font-size:13px;font-weight:700;white-space:nowrap;padding:3px 9px;border-radius:6px}
+.pao-dif.ok{background:rgba(34,197,94,.15);color:#86efac}
+.pao-dif.falta{background:rgba(239,68,68,.15);color:var(--red-soft)}
+.pao-dif.sobra{background:rgba(245,158,11,.15);color:var(--accent)}
+
 /* -------- MODAL -------- */
 .modal-overlay{
   position:fixed;inset:0;z-index:50;
@@ -354,6 +368,31 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
       <div id="vendaErr" class="err hidden"></div>
     </div>
 
+    <!-- ABA: PÃO (conferência anti-desvio) -->
+    <div id="tab-pao" class="tab-pane">
+      <div class="estq-header">
+        <select id="paoLoja"></select>
+        <button class="btn-sm" id="paoReload">↻</button>
+      </div>
+
+      <label for="paoDia">Vendas do dia</label>
+      <input id="paoDia" type="date" style="margin-bottom:14px" />
+
+      <div class="venda-resumo" id="paoResumo"></div>
+
+      <div class="card" id="paoLista">
+        <div class="muted" style="padding:8px 0">Carregando...</div>
+      </div>
+
+      <div class="muted" style="font-size:12px;line-height:1.5">
+        A conferência compara o último saldo que você lançou para a loja com tudo
+        que o caixa vendeu desde então. <b>Faltou</b> significa pão que saiu do
+        estoque sem venda registrada — é aí que o dinheiro não bate.
+      </div>
+
+      <div id="paoErr" class="err hidden"></div>
+    </div>
+
   </div>
 
   <nav class="bottom-tabs">
@@ -362,6 +401,9 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
     </button>
     <button class="tab-btn" data-tab="vendas">
       <span class="tab-icon">🧾</span>Vendas
+    </button>
+    <button class="tab-btn" data-tab="pao">
+      <span class="tab-icon">🥖</span>Pão
     </button>
     <button class="tab-btn" data-tab="estoque">
       <span class="tab-icon">📦</span>Estoque
@@ -918,6 +960,116 @@ function wirePeriods(periodsId, customId, state, onApply){
   });
 }
 
+// ================= CONFERÊNCIA DE PÃO =================
+// Compara o último saldo que o dono lançou para a loja com o que o caixa vendeu
+// desde então. Se sobrar pão a menos do que o esperado, saiu estoque sem venda —
+// é o sinal de que o dinheiro do caixa não vai bater.
+
+function preencherSeletorPaoLojas(){
+  const sel=$('paoLoja');
+  const atual=sel.value;
+  sel.innerHTML='<option value="">Todas as lojas</option>'+
+    lojasList.map(l=>`<option value="${l.storeId}">${l.nome}</option>`).join('');
+  if(atual) sel.value=atual;
+}
+
+function paoDiaSelecionado(){
+  if(!$('paoDia').value){
+    const h=new Date();
+    $('paoDia').value = h.getFullYear()+'-'+String(h.getMonth()+1).padStart(2,'0')+'-'+String(h.getDate()).padStart(2,'0');
+  }
+  return $('paoDia').value;
+}
+
+async function carregarPao(){
+  $('paoErr').classList.add('hidden');
+  $('paoResumo').innerHTML='';
+  $('paoLista').innerHTML='<div class="muted" style="padding:8px 0">Carregando...</div>';
+
+  const storeId = $('paoLoja').value || null;
+  let data;
+  try{
+    data = await rpc('get_conferencia_pao',{
+      p_email:creds.email, p_password:creds.senha,
+      p_dia:paoDiaSelecionado(), p_store_id:storeId
+    });
+  }catch(e){
+    $('paoErr').textContent='Falha ao carregar: '+e.message;
+    $('paoErr').classList.remove('hidden');
+    $('paoResumo').innerHTML='';
+    $('paoLista').innerHTML='';
+    return;
+  }
+
+  if(data && data.error){
+    $('paoErr').textContent = data.error==='forbidden'
+      ? 'Só o dono pode ver a conferência de pão.'
+      : 'Erro: '+data.error;
+    $('paoErr').classList.remove('hidden');
+    $('paoResumo').innerHTML='';
+    $('paoLista').innerHTML='';
+    return;
+  }
+
+  const linhas = (data && data.linhas) || [];
+  if(!linhas.length){
+    $('paoResumo').innerHTML='<div><div class="vr-l">Conferência</div><div class="vr-fat">—</div></div>';
+    $('paoLista').innerHTML='<div class="muted" style="padding:8px 0">Nenhum produto de pão cadastrado.</div>';
+    return;
+  }
+
+  // Resumo: total que faltou na rede (só o que está negativo) e receita do dia.
+  const faltouUn  = linhas.reduce((s,l)=> s + (l.diferenca<0 ? -l.diferenca : 0), 0);
+  const faltouRS  = linhas.reduce((s,l)=> s + (l.diferenca<0 ? -l.valorDiferenca : 0), 0);
+  const receitaDia= linhas.reduce((s,l)=> s + (l.receitaNoDia||0), 0);
+
+  $('paoResumo').innerHTML = `
+    <div>
+      <div class="vr-l">Pão vendido no dia</div>
+      <div class="vr-fat">${brl(receitaDia)}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="vr-l">Faltando</div>
+      <div class="vr-fat" style="color:${faltouUn>0?'var(--red)':'var(--green)'}">
+        ${faltouUn>0 ? faltouUn+' un' : 'OK'}
+      </div>
+      ${faltouUn>0?`<div class="pao-loja">${brl(faltouRS)}</div>`:''}
+    </div>`;
+
+  $('paoLista').innerHTML = linhas.map(l=>{
+    const dif = l.diferenca||0;
+    const semBase = !l.baseEm;
+    // Tolera arredondamento de ponto flutuante em quantidades fracionadas.
+    const cls   = semBase ? 'sobra' : (Math.abs(dif) < 0.001 ? 'ok' : (dif < 0 ? 'falta' : 'sobra'));
+    const label = semBase ? 'Sem base'
+      : (Math.abs(dif) < 0.001 ? 'Confere'
+        : (dif < 0 ? `Faltou ${fmtQtd(-dif)}` : `Sobrou ${fmtQtd(dif)}`));
+    const desde = l.baseEm ? fmtHoraData(l.baseEm) : '—';
+    return `
+      <div class="pao-row">
+        <div class="pao-head">
+          <div>
+            <div class="pao-nome">${l.produto}</div>
+            <div class="pao-loja">${l.loja} · desde ${desde}</div>
+          </div>
+          <div class="pao-dif ${cls}">${label}</div>
+        </div>
+        <div class="pao-nums">
+          <div><span>Enviado</span><b>${fmtQtd(l.base)}</b></div>
+          <div><span>Vendido</span><b>${fmtQtd(l.vendido)}</b></div>
+          <div><span>Esperado</span><b>${fmtQtd(l.esperado)}</b></div>
+          <div><span>No balcão</span><b>${fmtQtd(l.saldoAtual)}</b></div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// Quantidades podem ser fracionadas (peso), mas pão é unidade — mostra inteiro quando for.
+function fmtQtd(n){
+  const v = Number(n)||0;
+  return Number.isInteger(v) ? String(v) : v.toFixed(3).replace(/\.?0+$/,'').replace('.',',');
+}
+
 // ---- Tabs ----
 document.querySelectorAll('.tab-btn').forEach(btn=>{
   btn.onclick = ()=>{
@@ -930,8 +1082,17 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
       preencherSeletorVendaLojas();
       carregarVendas();
     }
+    if(btn.dataset.tab==='pao'){
+      preencherSeletorPaoLojas();
+      carregarPao();
+    }
   };
 });
+
+// ---- Conferência de pão: controles ----
+$('paoLoja').onchange   = carregarPao;
+$('paoReload').onclick  = carregarPao;
+$('paoDia').onchange    = carregarPao;
 
 // ---- Período: Dashboard ----
 wirePeriods('dashPeriods','dashCustom', dashPeriodo, carregar);

@@ -169,7 +169,7 @@ BEGIN
   -- Registra movimento de estoque
   IF v_diff != 0 THEN
     INSERT INTO "StockMovement"
-      ("id","productId","storeId","userId","tenantId","type","quantity","reason","createdAt","isSynced")
+      ("id","productId","storeId","userId","tenantId","type","quantity","reason","createdAt","isSynced","balanceBefore","balanceAfter")
     VALUES (
       gen_random_uuid()::text,
       p_product_id,
@@ -180,7 +180,9 @@ BEGIN
       ABS(v_diff),
       p_motivo,
       NOW(),
-      true
+      true,
+      v_qty_atual,
+      p_nova_quantidade
     );
   END IF;
 
@@ -651,3 +653,158 @@ $$;
 
 CREATE POLICY anon_read ON "OwnerStockAdjustment"
   FOR SELECT TO anon USING (true);
+
+
+-- ============================================================
+-- AUDITORIA DE ESTOQUE: saldo antes/depois em cada movimento
+--
+-- StockMovement guardava so a quantidade movimentada. Para conferir pao enviado x
+-- vendido x dinheiro do caixa, o dono precisa ver "tinha 275, saiu 30, ficou 245"
+-- sem ter que recalcular a cadeia inteira de movimentos. Estas colunas gravam isso
+-- direto na linha. Sao NULL nos movimentos antigos, gravados antes delas existirem.
+--
+-- push_vendas nao precisou mudar: ele usa jsonb_populate_record(null::"StockMovement", e),
+-- que absorve colunas novas automaticamente, e o INSERT nao lista colunas.
+-- ============================================================
+
+ALTER TABLE "StockMovement"
+  ADD COLUMN IF NOT EXISTS "balanceBefore" double precision,
+  ADD COLUMN IF NOT EXISTS "balanceAfter"  double precision;
+
+
+-- ============================================================
+-- get_conferencia_pao(p_email, p_password, p_dia, p_store_id)
+--
+-- Relatorio anti-desvio do painel do dono (aba "Pao"). Por loja x produto de pao:
+--
+--   base        ultimo saldo que o DONO declarou para a loja. OwnerStockAdjustment
+--               e ABSOLUTO: define o saldo, nao soma.
+--   vendido     unidades vendidas em vendas APROVADAS desde a base ate agora
+--   saldoAtual  foto do estoque que o PDV daquela loja empurrou (StoreProduct)
+--   esperado    base - vendido
+--   diferenca   saldoAtual - esperado
+--                 < 0  faltou pao sem venda registrada  -> dinheiro nao bate
+--                 > 0  sobrou pao (reposicao nao lancada, devolucao)
+--
+-- CUIDADO COM A JANELA: saldoAtual e a foto de AGORA. Por isso a reconciliacao roda
+-- na janela [ultimo ajuste do dono -> agora] e IGNORA p_dia. Comparar a base de um
+-- dia passado com o estoque de hoje produz diferenca falsa -- foi o primeiro desenho
+-- desta funcao e estava errado. p_dia alimenta so vendidoNoDia/receitaNoDia, que sao
+-- informativos e NAO entram no calculo da diferenca.
+--
+-- Fuso: OwnerStockAdjustment.createdAt e timestamptz (UTC) e Sale.saleDate e
+-- timestamp local do PDV. O ajuste e convertido para America/Sao_Paulo antes de
+-- comparar; sem isso a janela erra em 3 horas.
+--
+-- A base e o ultimo ajuste do dono. Produtos sem ajuste ainda aparecem como
+-- "sem base" (quantidades zeradas), em vez de comparar o estoque atual com ele
+-- mesmo e esconder que a conferencia ainda nao foi iniciada.
+CREATE OR REPLACE FUNCTION get_conferencia_pao(
+  p_email    TEXT,
+  p_password TEXT,
+  p_dia      DATE,
+  p_store_id TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_tenant_id TEXT;
+  v_role      TEXT;
+  v_linhas    JSONB;
+BEGIN
+  SELECT u."tenantId", u.role
+    INTO v_tenant_id, v_role
+    FROM "User" u
+   WHERE u.email = p_email
+     AND u.active = true
+     AND u.password = extensions.crypt(p_password, u.password)
+   LIMIT 1;
+
+  -- Mantem compatibilidade com os usuarios ainda em senha legada durante a
+  -- migracao do PDV para BCrypt.
+  IF v_tenant_id IS NULL THEN
+    SELECT u."tenantId", u.role
+      INTO v_tenant_id, v_role
+      FROM "User" u
+     WHERE u.email = p_email
+       AND u.active = true
+       AND u.password = p_password
+     LIMIT 1;
+  END IF;
+
+  IF v_tenant_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'invalid_credentials');
+  END IF;
+  IF v_role <> 'DONO' THEN
+    RETURN jsonb_build_object('error', 'forbidden');
+  END IF;
+
+  WITH lojas AS (
+    SELECT st.id, st.name
+      FROM "Store" st
+     WHERE st."tenantId" = v_tenant_id
+       AND st.active = true
+       AND (p_store_id IS NULL OR st.id = p_store_id)
+  ), bases AS (
+    SELECT DISTINCT ON (a."storeId", a."productId")
+           a."storeId", a."productId", a.quantity AS base,
+           a."createdAt" AT TIME ZONE 'America/Sao_Paulo' AS base_em
+      FROM "OwnerStockAdjustment" a
+      JOIN lojas l ON l.id = a."storeId"
+     WHERE a."tenantId" = v_tenant_id
+     ORDER BY a."storeId", a."productId", a."createdAt" DESC, a.id DESC
+  ), linhas AS (
+    SELECT p.id AS product_id,
+           p.name AS produto,
+           l.name AS loja,
+           b.base,
+           b.base_em,
+           COALESCE(sp.quantity, 0) AS saldo_atual,
+           COALESCE(vendas.vendido, 0) AS vendido,
+           COALESCE(vendas.receita_no_dia, 0) AS receita_no_dia,
+           p."priceSale" AS preco_unit_centavos
+      FROM lojas l
+      CROSS JOIN "Product" p
+      LEFT JOIN "StoreProduct" sp
+        ON sp."storeId" = l.id AND sp."productId" = p.id
+      LEFT JOIN bases b
+        ON b."storeId" = l.id AND b."productId" = p.id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(si.quantity) FILTER (
+                         WHERE s."paymentStatus" = 'APROVADO'
+                           AND b.base_em IS NOT NULL
+                           AND s."saleDate" >= b.base_em), 0) AS vendido,
+               COALESCE(SUM(si.subtotal) FILTER (
+                         WHERE s."paymentStatus" = 'APROVADO'
+                           AND s."saleDate"::date = p_dia), 0) AS receita_no_dia
+          FROM "SaleItem" si
+          JOIN "Sale" s ON s.id = si."saleId"
+         WHERE si."productId" = p.id
+           AND s."storeId" = l.id
+           AND s."tenantId" = v_tenant_id
+      ) vendas ON true
+     WHERE p."tenantId" = v_tenant_id
+       AND p.active = true
+       AND p.type = 'PAO_FRANCES'
+  )
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'produto', produto,
+    'loja', loja,
+    'baseEm', base_em,
+    'base', COALESCE(base, 0),
+    'vendido', vendido,
+    'esperado', CASE WHEN base_em IS NULL THEN 0 ELSE base - vendido END,
+    'saldoAtual', saldo_atual,
+    'diferenca', CASE WHEN base_em IS NULL THEN 0 ELSE saldo_atual - (base - vendido) END,
+    'valorDiferenca', CASE WHEN base_em IS NULL THEN 0 ELSE (saldo_atual - (base - vendido)) * preco_unit_centavos END,
+    'receitaNoDia', receita_no_dia
+  ) ORDER BY loja, produto), '[]'::jsonb)
+    INTO v_linhas
+    FROM linhas;
+
+  RETURN jsonb_build_object('linhas', v_linhas);
+END;
+$$;

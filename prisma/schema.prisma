@@ -177,6 +177,12 @@ model StockMovement {
   createdAt   DateTime @default(now())
   isSynced    Boolean  @default(false)
   syncedAt    DateTime?
+
+  /// Saldo do produto na loja antes e depois deste movimento. Permite auditar
+  /// "tinha 275, saiu 30, ficou 245" sem recalcular a cadeia. Nulo em movimentos
+  /// gravados antes destas colunas existirem (adicionadas em 2026-08-19).
+  balanceBefore Float?
+  balanceAfter  Float?
 }
 
 /// Fila de ajustes de estoque feitos pelo DONO (painel web ou PDV) para uma loja.

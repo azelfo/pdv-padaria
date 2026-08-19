@@ -16,6 +16,13 @@ namespace PdvPadaria.Models
         public string Reason { get; set; } = "VENDA"; // "VENDA", "REPOSICAO", "PERDA", "AJUSTE_MANUAL"
         public string? SaleId { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.Now;
+
+        // Saldo do produto ANTES e DEPOIS deste movimento, na loja onde ele ocorreu.
+        // Permite auditar sem recalcular: "tinha 275, saiu 30, ficou 245". É o que torna
+        // possível conferir pães enviados x vendidos x dinheiro do caixa e detectar
+        // desvio. Nulo em movimentos antigos, gravados antes destes campos existirem.
+        public double? BalanceBefore { get; set; }
+        public double? BalanceAfter { get; set; }
         
         // Controle de Sincronização
         public bool IsSynced { get; set; } = false;
