@@ -381,9 +381,17 @@ namespace PdvPadaria.Services
                         }
                     }
 
-                    // Sincroniza Regras de Preço de Pão
+                    // Sincroniza Regras de Preço de Pão.
+                    // A nuvem é a dona da tabela de faixas. Antes só inseríamos a linha da nuvem,
+                    // que passava a conviver com a semente local "config-pao-test" criada no
+                    // primeiro boot. Como a leitura pegava uma linha qualquer, o caixa podia
+                    // continuar com a faixa antiga depois de o dono mudar o preço no painel.
+                    // Apagar as outras linhas desta loja deixa uma só, e ela é a da nuvem.
                     if (breadConfigs != null && breadConfigs.Count > 0)
                     {
+                        _dbConnection.Execute(
+                            "DELETE FROM BreadConfig WHERE StoreId = ? AND Id <> ?",
+                            storeId, breadConfigs[0].Id);
                         _dbConnection.InsertOrReplace(breadConfigs[0]);
                     }
                 });

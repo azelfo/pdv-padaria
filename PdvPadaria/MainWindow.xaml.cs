@@ -1105,7 +1105,13 @@ namespace PdvPadaria
             try
             {
                 var connection = App.Database.GetConnection();
-                var breadConfig = await connection.Table<BreadConfig>().FirstOrDefaultAsync();
+                // Filtra pela loja e por ativo: sem isso o FirstOrDefault pegava qualquer
+                // linha da tabela — inclusive a semente local antiga — e o pão podia sair
+                // com a faixa de preço errada.
+                string storeIdPao = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+                var breadConfig = await connection.Table<BreadConfig>()
+                    .Where(b => b.StoreId == storeIdPao && b.Active == true)
+                    .FirstOrDefaultAsync();
                 if (breadConfig != null)
                 {
                     priceUnit = breadConfig.PriceUnit;

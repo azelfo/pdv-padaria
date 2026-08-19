@@ -785,14 +785,12 @@
                                     <Border CornerRadius="4" Background="{StaticResource Surface}" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1" Padding="6,3" Margin="0,0,5,0">
                                         <TextBlock Text="[F4] Lançar Pão" FontSize="11" Foreground="{StaticResource TextMuted}"/>
                                     </Border>
+                                    <!-- A forma de pagamento é escolhida DEPOIS do F12, já na tela de
+                                         fechamento. Antes esta barra anunciava [F5] Dinheiro, [F6] PIX e
+                                         [F7] Cartão, teclas que nunca existiram no caixa: quem seguia a
+                                         dica apertava e nada acontecia. -->
                                     <Border CornerRadius="4" Background="{StaticResource Surface}" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1" Padding="6,3" Margin="0,0,5,0">
-                                        <TextBlock Text="[F5] Dinheiro" FontSize="11" Foreground="{StaticResource TextMuted}"/>
-                                    </Border>
-                                    <Border CornerRadius="4" Background="{StaticResource Surface}" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1" Padding="6,3" Margin="0,0,5,0">
-                                        <TextBlock Text="[F6] PIX" FontSize="11" Foreground="{StaticResource TextMuted}"/>
-                                    </Border>
-                                    <Border CornerRadius="4" Background="{StaticResource Surface}" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1" Padding="6,3" Margin="0,0,5,0">
-                                        <TextBlock Text="[F7] Cartão" FontSize="11" Foreground="{StaticResource TextMuted}"/>
+                                        <TextBlock Text="No pagamento: F1 Dinheiro · F2 PIX · F3 Cartão" FontSize="11" Foreground="{StaticResource TextMuted}"/>
                                     </Border>
                                     <Border CornerRadius="4" Background="{StaticResource Surface}" BorderBrush="{StaticResource BorderSoft}" BorderThickness="1" Padding="6,3" Margin="0,0,5,0">
                                         <TextBlock Text="[Esc] Voltar / Cancelar" FontSize="11" Foreground="{StaticResource DangerSoft}"/>

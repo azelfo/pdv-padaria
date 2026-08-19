@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "notes": "Agora o PDV roda em Windows 7 SP1 e 8.1, alem do 10 e 11. Todo movimento de estoque passa a gravar o saldo antes e depois, entao da para conferir quanto pao foi para a loja, quanto foi vendido e quanto sobrou. Ajustes de estoque e perdas agora sobem para a nuvem (antes ficavam presos no caixa). A busca de produtos mostra sugestoes enquanto voce digita, e a venda de pao ficou em um passo so. Nova aba de Etiquetas, com impressao por peso para frios. Esta atualizacao NAO altera a configuracao da loja."
+  "notes": "Correcao no lancamento de pao: o caixa lia a tabela de precos errada e podia continuar com a faixa antiga depois de o dono mudar o valor no painel. Agora ele usa sempre a tabela da loja vinda da nuvem. As dicas de tecla no rodape da venda tambem estavam erradas (F5, F6 e F7 nao faziam nada); o certo e F12 para fechar e depois F1 Dinheiro, F2 PIX ou F3 Cartao. Esta atualizacao NAO altera a configuracao da loja."
 }
