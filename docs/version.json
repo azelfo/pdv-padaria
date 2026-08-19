@@ -1,5 +1,5 @@
 {
-  "version": "1.0.12",
+  "version": "1.1.0",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "notes": "O instalador agora verifica e instala sozinho o componente .NET 8 da Microsoft quando ele falta na maquina, e avisa de forma clara se o computador for Windows 7, 8 ou 8.1 (versoes onde o PDV nao funciona)."
+  "notes": "Agora o PDV roda em Windows 7 SP1 e 8.1, alem do 10 e 11. Todo movimento de estoque passa a gravar o saldo antes e depois, entao da para conferir quanto pao foi para a loja, quanto foi vendido e quanto sobrou. Ajustes de estoque e perdas agora sobem para a nuvem (antes ficavam presos no caixa). A busca de produtos mostra sugestoes enquanto voce digita, e a venda de pao ficou em um passo so. Nova aba de Etiquetas, com impressao por peso para frios. Esta atualizacao NAO altera a configuracao da loja."
 }

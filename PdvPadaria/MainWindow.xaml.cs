@@ -2355,45 +2355,65 @@ namespace PdvPadaria
                     {
                         if (TryParseDouble(textBox.Text, out double inputVal))
                         {
-                            double oldQty = product.LocalStockQuantity;
-                            double newQty = combo.SelectedIndex == 0 ? oldQty + inputVal : inputVal;
-
-                            if (newQty < 0)
-                            {
-                                MessageBox.Show("O saldo do estoque não pode ser negativo.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
-                                return;
-                            }
+                            bool somar = combo.SelectedIndex == 0; // 0 = "Somar", 1 = "Definir"
 
                             try
                             {
                                 string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
                                 string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
 
-                                var movType = newQty >= oldQty ? "ENTRADA" : "SAIDA";
-                                var diff = Math.Abs(newQty - oldQty);
-
-                                var movement = new StockMovement
-                                {
-                                    Id = Guid.NewGuid().ToString(),
-                                    ProductId = product.Id,
-                                    StoreId = storeId,
-                                    UserId = CurrentUser.Id,
-                                    TenantId = tenantId,
-                                    Type = movType,
-                                    Quantity = diff,
-                                    Reason = "AJUSTE_MANUAL",
-                                    CreatedAt = DateTime.Now,
-                                    IsSynced = false,
-                                    BalanceBefore = oldQty,
-                                    BalanceAfter = newQty
-                                };
+                                bool saldoNegativo = false;
+                                bool produtoSumiu = false;
 
                                 await App.Database.RunInTransactionAsync((tx) =>
                                 {
-                                    tx.Insert(movement);
+                                    // Relê o produto DENTRO da transação. O objeto carregado na
+                                    // abertura do diálogo já pode estar velho: o sync roda em
+                                    // background e aplica ajustes do dono enquanto esta janela
+                                    // está aberta. Usar o valor velho gravaria um saldo anterior
+                                    // mentiroso no histórico e, no modo "Definir", apagaria o que
+                                    // tivesse entrado nesse meio-tempo.
+                                    var atual = tx.Find<Product>(product.Id);
+                                    if (atual == null) { produtoSumiu = true; return; }
+
+                                    double oldQty = atual.LocalStockQuantity;
+                                    double newQty = somar ? oldQty + inputVal : inputVal;
+
+                                    if (newQty < 0) { saldoNegativo = true; return; }
+
+                                    tx.Insert(new StockMovement
+                                    {
+                                        Id = Guid.NewGuid().ToString(),
+                                        ProductId = atual.Id,
+                                        StoreId = storeId,
+                                        UserId = CurrentUser.Id,
+                                        TenantId = tenantId,
+                                        Type = newQty >= oldQty ? "ENTRADA" : "SAIDA",
+                                        Quantity = Math.Abs(newQty - oldQty),
+                                        Reason = "AJUSTE_MANUAL",
+                                        CreatedAt = DateTime.Now,
+                                        IsSynced = false,
+                                        BalanceBefore = oldQty,
+                                        BalanceAfter = newQty
+                                    });
+
+                                    atual.LocalStockQuantity = newQty;
+                                    tx.Update(atual);
+
+                                    // Mantém o objeto que a tela segura coerente com o gravado.
                                     product.LocalStockQuantity = newQty;
-                                    tx.Update(product);
                                 });
+
+                                if (produtoSumiu)
+                                {
+                                    MessageBox.Show("Este produto não existe mais no estoque local.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                                    return;
+                                }
+                                if (saldoNegativo)
+                                {
+                                    MessageBox.Show("O saldo do estoque não pode ser negativo.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                                    return;
+                                }
 
                                 adjustWindow.Close();
                                 if (MainTabControl.SelectedIndex == 1)

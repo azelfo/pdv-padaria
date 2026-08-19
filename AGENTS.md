@@ -7,7 +7,7 @@ This repository is a **WPF desktop application** (C#, `net8.0-windows`) living i
 - **App:** WPF, code-behind style (no MVVM framework). Entry: `App.xaml.cs` → `Views/LoginWindow` → `MainWindow`.
 - **Local DB:** SQLite via `sqlite-net-pcl`, stored at `%AppData%/pdv-padaria/dev.db`. Tables mirror the cloud (`Models/*.cs`).
 - **Cloud:** Supabase Postgres, reached **directly** over its REST API (`/rest/v1/...`) — see `Services/SyncService.cs` and `Views/LoginWindow.xaml.cs`. There is no intermediate backend server.
-- **Payments:** Banco Inter PIX (mTLS + polling) via `Services/InterPixService.cs`.
+- **Payments:** none integrated. Sales record a `paymentMethod` (PIX/DINHEIRO/CARTAO_*) but no gateway is called — there is no `InterPixService.cs`, and the old InfinitePay keys were dropped from config on 2026-08-19 because nothing read them.
 - **Auth:** `Services/PasswordHasher.cs` (BCrypt; also accepts legacy plaintext for migration). Users are managed directly in the Supabase dashboard.
 - **DB schema reference:** [`prisma/schema.prisma`](prisma/schema.prisma) documents the Supabase table structure. It is kept as reference only — there is no Node/Prisma tooling in this repo anymore.
 
@@ -15,7 +15,8 @@ This repository is a **WPF desktop application** (C#, `net8.0-windows`) living i
 
 - **Design tokens:** colors/typography live in `PdvPadaria/App.xaml` (XAML `{StaticResource ...}`) and `Services/AppColors.cs` (code-behind). Do **not** hardcode hex in XAML or `new SolidColorBrush(...)` in C#. Dark theme, amber accent `#F59E0B`.
 - **Money:** stored and computed in **centavos** (int). Convert only for display.
-- **Config:** `PdvPadaria/.env` (gitignored) supplies `SUPABASE_*`, `TENANT_ID`, `STORE_ID`, `INTER_*`. Read via `Services/EnvService.cs`.
+- **Config:** `PdvPadaria/.env` (gitignored) supplies exactly six keys — `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TENANT_ID`, `STORE_ID`, `STORE_SYNC_TOKEN`, `TERMINAL_NAME`. Read via `Services/EnvService.cs`.
+  **Never package `.env` in the installer.** `STORE_SYNC_TOKEN` is the write credential for the sync RPCs and `STORE_ID` is the machine's store identity; the installer is published in a public repo, and shipping it both leaked the token and would stamp every store with the builder's identity. `setup.iss` excludes it and ships `.env.exemplo` with `onlyifdoesntexist`.
 
 ## Build
 

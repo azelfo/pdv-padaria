@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# Modelo sem valores, usado pelo instalador. Nao tem segredo, entao e versionado.
+!PdvPadaria/.env.exemplo
+
+# Tokens de sincronizacao em texto puro, para a troca manual em cada caixa.
+TOKENS-NOVOS-LEIA.txt
 
 # vercel
 .vercel

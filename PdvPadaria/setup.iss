@@ -46,8 +46,23 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 [Files]
 ; Executável Principal
 Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\PdvPadaria.exe"; DestDir: "{app}"; Flags: ignoreversion
-; Todas as dependências geradas pelo Publish (DLLs, configurações, .env)
-Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+;
+; ATENÇÃO — o .env é EXCLUÍDO daqui de propósito. Dois motivos, os dois graves:
+;
+;   1) SEGREDO: ele guarda STORE_SYNC_TOKEN (credencial de escrita da sincronização),
+;      INFINITE_CLIENT_SECRET e a chave PIX. Este instalador é publicado num repositório
+;      PÚBLICO no GitHub, então qualquer um que baixasse o .exe teria esses valores.
+;   2) IDENTIDADE: STORE_ID e STORE_SYNC_TOKEN dizem QUAL loja é aquele caixa. Copiar o
+;      .env de quem gerou o instalador faria toda loja atualizada virar a mesma loja —
+;      as vendas de todas cairiam num único STORE_ID e a conferência de estoque pararia
+;      de fechar.
+;
+; O que vai no pacote é o .env.exemplo, sem valores, criado só se ainda não houver .env.
+Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\*"; DestDir: "{app}"; Excludes: ".env"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Modelo em branco. "onlyifdoesntexist" garante que a atualização NUNCA sobrescreve a
+; configuração da loja; numa instalação nova ele vira o .env a ser preenchido.
+Source: "d:\PDV\PdvPadaria\.env.exemplo"; DestDir: "{app}"; DestName: ".env"; Flags: onlyifdoesntexist
+Source: "d:\PDV\PdvPadaria\.env.exemplo"; DestDir: "{app}"; Flags: ignoreversion
 ; Nota: Ajuste os caminhos acima se utilizar a publicação com RID específico (ex: \publish\win-x64\)
 #ifdef OFFLINE
 ; .NET Framework 4.8 embutido (só na versão Completo). "dontcopy" = fica dentro do
