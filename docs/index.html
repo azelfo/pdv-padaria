@@ -151,6 +151,7 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
 .estq-filters button.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .prod-badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;margin-left:6px;vertical-align:middle;text-transform:uppercase;letter-spacing:.3px}
 .prod-badge.prod{background:rgba(245,158,11,.15);color:var(--accent)}
+.prod-badge.pao{background:rgba(34,197,94,.15);color:#86efac}
 .prod-row{
   display:grid;grid-template-columns:1fr auto auto auto;
   align-items:center;gap:8px;
@@ -529,6 +530,15 @@ async function carregarEstoque(){
 
 // É de produção tudo que NÃO é mercadoria normal (mesma regra do PDV: Type != "NORMAL").
 function ehProducao(tipo){ return (tipo||'NORMAL').toUpperCase() !== 'NORMAL'; }
+function ehPao(tipo){ return (tipo||'').toUpperCase() === 'PAO_FRANCES'; }
+// O pão continua contando como produção própria no filtro, mas ganha etiqueta própria:
+// no PDV ele aparece como PAO_FRANCES, e mostrar "Produção" aqui fazia a mesma coisa
+// parecer classificada de dois jeitos diferentes nas duas telas.
+function etiquetaTipo(tipo){
+  if(ehPao(tipo)) return '<span class="prod-badge pao">Pão</span>';
+  if(ehProducao(tipo)) return '<span class="prod-badge prod">Produção</span>';
+  return '';
+}
 
 function renderEstoque(){
   const prods = window._estqProds;
@@ -558,7 +568,7 @@ function renderEstoque(){
   $('estqCard').innerHTML = visiveis.map(({p,i})=>`
     <div class="prod-row" data-i="${i}" data-pid="${p.productId}" data-orig="${p.quantidade}">
       <div class="prod-info">
-        <div class="prod-nome">${p.nome}${ehProducao(p.tipo)?'<span class="prod-badge prod">Produção</span>':''}</div>
+        <div class="prod-nome">${p.nome}${etiquetaTipo(p.tipo)}</div>
         <div class="prod-meta">${p.unitMeasure} · mín ${p.minimo}</div>
       </div>
       <input type="number" class="qty-input" value="${p.quantidade}" min="0" step="${p.unitMeasure==='KG'?'0.001':'1'}" data-i="${i}" />
