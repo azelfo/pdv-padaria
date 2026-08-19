@@ -683,22 +683,119 @@ namespace PdvPadaria
             placeholder.Visibility = string.IsNullOrEmpty(caixa.Text) ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        private void SearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        private async void SearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
         {
             SincronizarPlaceholder(SearchBox, SearchPlaceholder);
+            if (_catalogoBusca.Count == 0) await ObterCatalogoAsync();
+            AtualizarSugestoes(SearchBox.Text, VendaSugestoesList, VendaSugestoesPopup);
         }
 
-        private void ConsultationSearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        private async void ConsultationSearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
         {
             SincronizarPlaceholder(ConsultationSearchBox, ConsultationPlaceholder);
+            if (_catalogoBusca.Count == 0) await ObterCatalogoAsync();
+            AtualizarSugestoes(ConsultationSearchBox.Text, ConsultationSugestoesList, ConsultationSugestoesPopup);
+        }
+
+        // Clique numa sugestão: lança no carrinho (venda) ou mostra os dados (consulta).
+        private void VendaSugestoes_Click(object sender, MouseButtonEventArgs e)
+        {
+            UsarSugestaoVenda();
+        }
+
+        private void ConsultationSugestoes_Click(object sender, MouseButtonEventArgs e)
+        {
+            UsarSugestaoConsulta();
+        }
+
+        private void UsarSugestaoVenda()
+        {
+            int i = VendaSugestoesList.SelectedIndex;
+            if (i < 0 || i >= _sugestoesAtuais.Count) return;
+            var produto = _sugestoesAtuais[i];
+
+            VendaSugestoesPopup.IsOpen = false;
+            SearchBox.Text = string.Empty;
+            SearchBox.Focus();
+
+            if (produto.Type == "PAO_FRANCES") PromptPaoFrances(produto);
+            else AddProductToCart(produto, 1.0);
+        }
+
+        private async void UsarSugestaoConsulta()
+        {
+            int i = ConsultationSugestoesList.SelectedIndex;
+            if (i < 0 || i >= _sugestoesAtuais.Count) return;
+            var produto = _sugestoesAtuais[i];
+
+            ConsultationSugestoesPopup.IsOpen = false;
+            ConsultationSearchBox.Text = string.Empty;
+            await MostrarConsulta(produto);
+        }
+
+        // Preenche o cartão de detalhes do produto na aba de consulta.
+        private async Task MostrarConsulta(Product produto)
+        {
+            ConsultationProductName.Text = produto.Name;
+            ConsultationProductPrice.Text = $"R$ {produto.PriceSale / 100.0:F2}";
+            ConsultationProductStock.Text = $"Estoque: {(produto.UnitMeasure == "KG" ? $"{produto.LocalStockQuantity:F3} KG" : $"{produto.LocalStockQuantity:F0} UN")}";
+            ConsultationBarcode.Text = produto.Barcode ?? "-";
+            try
+            {
+                var connection = App.Database.GetConnection();
+                var categoria = await connection.FindAsync<Category>(produto.CategoryId);
+                ConsultationProductCategory.Text = $"Categoria: {(categoria != null ? categoria.Name : "Geral")}";
+            }
+            catch
+            {
+                ConsultationProductCategory.Text = "Categoria: Geral";
+            }
         }
 
         private void SearchBox_KeyDown(object sender, KeyEventArgs e)
         {
+            // Com a lista de sugestões aberta, as setas navegam e o Enter escolhe.
+            // O leitor de código de barras não é afetado: ele digita rápido e o texto casa
+            // exatamente com um código, então nem chega a abrir sugestão.
+            if (VendaSugestoesPopup.IsOpen && NavegarSugestoes(e, VendaSugestoesList))
+            {
+                e.Handled = true;
+                return;
+            }
             if (e.Key == Key.Enter)
             {
+                if (VendaSugestoesPopup.IsOpen && VendaSugestoesList.SelectedIndex >= 0)
+                {
+                    e.Handled = true;
+                    UsarSugestaoVenda();
+                    return;
+                }
                 ExecuteSearch();
             }
+            else if (e.Key == Key.Escape && VendaSugestoesPopup.IsOpen)
+            {
+                e.Handled = true;
+                VendaSugestoesPopup.IsOpen = false;
+            }
+        }
+
+        // Move a seleção da lista de sugestões com as setas. Retorna true se tratou a tecla.
+        private static bool NavegarSugestoes(KeyEventArgs e, ListBox lista)
+        {
+            if (lista.Items.Count == 0) return false;
+            if (e.Key == Key.Down)
+            {
+                lista.SelectedIndex = (lista.SelectedIndex + 1) % lista.Items.Count;
+                lista.ScrollIntoView(lista.SelectedItem);
+                return true;
+            }
+            if (e.Key == Key.Up)
+            {
+                lista.SelectedIndex = lista.SelectedIndex <= 0 ? lista.Items.Count - 1 : lista.SelectedIndex - 1;
+                lista.ScrollIntoView(lista.SelectedItem);
+                return true;
+            }
+            return false;
         }
 
         private void SearchButton_Click(object sender, RoutedEventArgs e)
@@ -718,37 +815,37 @@ namespace PdvPadaria
             try
             {
                 var connection = App.Database.GetConnection();
+
+                // Código de barras exato primeiro: é o caminho do leitor, e precisa lançar direto.
                 var product = await connection.Table<Product>()
                     .Where(p => p.Barcode == query && p.Active)
                     .FirstOrDefaultAsync();
 
                 if (product == null)
                 {
-                    var matches = await connection.Table<Product>()
-                        .Where(p => p.Name.Contains(query) && p.Active)
-                        .ToListAsync();
+                    // Busca por nome ignorando acento (antes "pao" não achava "Pão").
+                    await ObterCatalogoAsync();
+                    var achados = BuscarProdutos(query, 30);
 
-                    if (matches.Any())
+                    if (achados.Count == 0)
                     {
-                        product = matches.First();
+                        MessageBox.Show($"Nenhum produto encontrado para '{query}'.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
                     }
+                    if (achados.Count > 1)
+                    {
+                        // Antes o sistema lançava silenciosamente o PRIMEIRO da lista, o que
+                        // podia colocar no carrinho um produto diferente do pretendido.
+                        SearchBox.Text = query;
+                        AtualizarSugestoes(query, VendaSugestoesList, VendaSugestoesPopup);
+                        SearchBox.Focus();
+                        return;
+                    }
+                    product = achados[0];
                 }
 
-                if (product != null)
-                {
-                    if (product.Type == "PAO_FRANCES")
-                    {
-                        PromptPaoFrances(product);
-                    }
-                    else
-                    {
-                        AddProductToCart(product, 1.0);
-                    }
-                }
-                else
-                {
-                    MessageBox.Show("Produto não encontrado no catálogo local.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
+                if (product.Type == "PAO_FRANCES") PromptPaoFrances(product);
+                else AddProductToCart(product, 1.0);
             }
             catch (Exception ex)
             {
@@ -844,6 +941,85 @@ namespace PdvPadaria
                 MessageBox.Show($"Erro ao buscar pão: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
+        // ================= BUSCA DE PRODUTO (sugestões enquanto digita) =================
+
+        // Normaliza para comparar: tira acento e caixa. Sem isso, "pao" não achava "Pão"
+        // e "ACUCAR" não achava "Açúcar" — o LIKE do SQLite só ignora caixa em ASCII.
+        private static string Normalizar(string? texto)
+        {
+            if (string.IsNullOrEmpty(texto)) return string.Empty;
+            var decomposto = texto!.Normalize(NormalizationForm.FormD);
+            var sb = new StringBuilder(decomposto.Length);
+            foreach (var ch in decomposto)
+            {
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                    sb.Append(ch);
+            }
+            return sb.ToString().ToUpperInvariant();
+        }
+
+        // Catálogo em memória para a busca. São ~100 produtos, então filtrar em memória é
+        // instantâneo e permite comparar ignorando acento (o que o SQL não faria).
+        private List<Product> _catalogoBusca = new List<Product>();
+
+        private async Task<List<Product>> ObterCatalogoAsync()
+        {
+            try
+            {
+                var connection = App.Database.GetConnection();
+                _catalogoBusca = await connection.Table<Product>().Where(p => p.Active).ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ObterCatalogo Error]: {ex.Message}");
+            }
+            return _catalogoBusca;
+        }
+
+        // Produtos que casam com o texto digitado, melhores primeiro:
+        // começa com o termo > contém o termo > casa pelo código de barras.
+        private List<Product> BuscarProdutos(string termo, int limite = 8)
+        {
+            var alvo = Normalizar(termo);
+            if (alvo.Length == 0) return new List<Product>();
+
+            return _catalogoBusca
+                .Select(p => new { P = p, N = Normalizar(p.Name), B = p.Barcode ?? string.Empty })
+                .Where(x => x.N.Contains(alvo) || x.B.Contains(termo.Trim()))
+                .OrderBy(x => x.N.StartsWith(alvo) ? 0 : 1)
+                .ThenBy(x => x.N)
+                .Take(limite)
+                .Select(x => x.P)
+                .ToList();
+        }
+
+        private static string DescreverProduto(Product p)
+        {
+            string estoque = p.UnitMeasure == "KG" ? $"{p.LocalStockQuantity:F3} KG" : $"{p.LocalStockQuantity:F0} UN";
+            return $"{p.Name}   —   R$ {p.PriceSale / 100.0:F2}   ·   {estoque}";
+        }
+
+        // Preenche e mostra/esconde a lista de sugestões de uma das barras de busca.
+        private void AtualizarSugestoes(string termo, ListBox lista, System.Windows.Controls.Primitives.Popup popup)
+        {
+            // Uma letra só traria quase o catálogo inteiro; a partir de 2 já vale mostrar.
+            if (termo.Trim().Length < 2)
+            {
+                popup.IsOpen = false;
+                return;
+            }
+
+            var achados = BuscarProdutos(termo);
+            lista.Items.Clear();
+            foreach (var p in achados) lista.Items.Add(DescreverProduto(p));
+            _sugestoesAtuais = achados;
+
+            popup.IsOpen = achados.Count > 0;
+            if (achados.Count > 0) lista.SelectedIndex = 0;
+        }
+
+        private List<Product> _sugestoesAtuais = new List<Product>();
 
         // Busca "contém" sem diferenciar maiúscula/minúscula. O .NET Framework 4.8 não tem
         // a sobrecarga string.Contains(string, StringComparison) — só o .NET moderno tem —
@@ -1061,7 +1237,9 @@ namespace PdvPadaria
                 }
             };
 
-            button.Click += async (s, ev) => {
+            // Sem "async": desde que o lançamento passou a usar direto o pão selecionado,
+            // não há mais consulta ao banco aqui.
+            button.Click += (s, ev) => {
                 if (TryParseDouble(textBox.Text, out double val) && val > 0)
                 {
                     int valueCents = (int)Math.Round(val * 100);
@@ -1763,9 +1941,25 @@ namespace PdvPadaria
 
         private void ConsultationSearchBox_KeyDown(object sender, KeyEventArgs e)
         {
+            if (ConsultationSugestoesPopup.IsOpen && NavegarSugestoes(e, ConsultationSugestoesList))
+            {
+                e.Handled = true;
+                return;
+            }
             if (e.Key == Key.Enter)
             {
+                if (ConsultationSugestoesPopup.IsOpen && ConsultationSugestoesList.SelectedIndex >= 0)
+                {
+                    e.Handled = true;
+                    UsarSugestaoConsulta();
+                    return;
+                }
                 ExecuteConsultationSearch();
+            }
+            else if (e.Key == Key.Escape && ConsultationSugestoesPopup.IsOpen)
+            {
+                e.Handled = true;
+                ConsultationSugestoesPopup.IsOpen = false;
             }
         }
 
@@ -1779,36 +1973,35 @@ namespace PdvPadaria
             try
             {
                 var connection = App.Database.GetConnection();
+
+                // Código de barras exato primeiro (caminho do leitor).
                 var product = await connection.Table<Product>()
                     .Where(p => p.Barcode == query && p.Active)
                     .FirstOrDefaultAsync();
 
                 if (product == null)
                 {
-                    var matches = await connection.Table<Product>()
-                        .Where(p => p.Name.Contains(query) && p.Active)
-                        .ToListAsync();
+                    // Nome ignorando acento; com mais de um resultado, mostra as opções em vez
+                    // de escolher o primeiro por conta própria.
+                    await ObterCatalogoAsync();
+                    var achados = BuscarProdutos(query, 30);
 
-                    if (matches.Any())
+                    if (achados.Count == 0)
                     {
-                        product = matches.First();
+                        MessageBox.Show($"Nenhum produto encontrado para '{query}'.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
                     }
+                    if (achados.Count > 1)
+                    {
+                        ConsultationSearchBox.Text = query;
+                        AtualizarSugestoes(query, ConsultationSugestoesList, ConsultationSugestoesPopup);
+                        ConsultationSearchBox.Focus();
+                        return;
+                    }
+                    product = achados[0];
                 }
 
-                if (product != null)
-                {
-                    ConsultationProductName.Text = product.Name;
-                    ConsultationProductPrice.Text = $"R$ {product.PriceSale / 100.0:F2}";
-                    ConsultationProductStock.Text = $"Estoque: {(product.UnitMeasure == "KG" ? $"{product.LocalStockQuantity:F3} KG" : $"{product.LocalStockQuantity:F0} UN")}";
-                    
-                    var category = await connection.FindAsync<Category>(product.CategoryId);
-                    ConsultationProductCategory.Text = $"Categoria: {(category != null ? category.Name : "Geral")}";
-                    ConsultationBarcode.Text = product.Barcode ?? "-";
-                }
-                else
-                {
-                    MessageBox.Show("Produto não encontrado.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
-                }
+                await MostrarConsulta(product);
             }
             catch (Exception ex)
             {

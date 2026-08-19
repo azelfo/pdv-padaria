@@ -568,6 +568,17 @@
                                 <TextBlock x:Name="ConsultationPlaceholder" IsHitTestVisible="False" Text="Consulte por Nome ou Código de Barras (ou use o leitor)..."
                                            VerticalAlignment="Center" HorizontalAlignment="Left" Margin="20,0,0,0" Foreground="{StaticResource TextSubtle}" FontSize="16"/>
                                 <Button Grid.Column="1" Content="Consultar" Margin="10,0,0,0" Width="130" Style="{StaticResource ShortcutButton}" Height="50" FontSize="14" Click="ConsultationSearchButton_Click"/>
+
+                                <!-- Sugestões de produto conforme digita (some ao usar o leitor). -->
+                                <Popup x:Name="ConsultationSugestoesPopup" PlacementTarget="{Binding ElementName=ConsultationSearchBox}"
+                                       Placement="Bottom" AllowsTransparency="True" StaysOpen="False" Width="700">
+                                    <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Accent}" BorderThickness="1"
+                                            CornerRadius="8" Margin="0,4,0,0" Effect="{StaticResource ElevCard}">
+                                        <ListBox x:Name="ConsultationSugestoesList" Background="Transparent" BorderThickness="0"
+                                                 MaxHeight="260" Foreground="{StaticResource TextPrimary}" FontSize="15"
+                                                 MouseLeftButtonUp="ConsultationSugestoes_Click"/>
+                                    </Border>
+                                </Popup>
                             </Grid>
 
                             <!-- Card de Detalhes do Produto -->
@@ -647,6 +658,18 @@
                                     <TextBlock x:Name="SearchPlaceholder" IsHitTestVisible="False" Text="Pesquise por Nome ou Código de Barras..."
                                                VerticalAlignment="Center" HorizontalAlignment="Left" Margin="15,0,0,0" Foreground="{StaticResource TextSubtle}" FontSize="14"/>
                                     <Button Grid.Column="1" Content="Buscar" Margin="10,0,0,0" Width="100" Style="{StaticResource ShortcutButton}" Click="SearchButton_Click"/>
+
+                                    <!-- Sugestões de produto conforme digita (some ao usar o leitor). -->
+                                    <Popup x:Name="VendaSugestoesPopup" PlacementTarget="{Binding ElementName=SearchBox}"
+                                           Placement="Bottom" AllowsTransparency="True" StaysOpen="False"
+                                           Width="{Binding ActualWidth, ElementName=SearchBox}">
+                                        <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Accent}" BorderThickness="1"
+                                                CornerRadius="8" Margin="0,4,0,0" Effect="{StaticResource ElevCard}">
+                                            <ListBox x:Name="VendaSugestoesList" Background="Transparent" BorderThickness="0"
+                                                     MaxHeight="260" Foreground="{StaticResource TextPrimary}" FontSize="14"
+                                                     MouseLeftButtonUp="VendaSugestoes_Click"/>
+                                        </Border>
+                                    </Popup>
                                 </Grid>
 
                                 <!-- Carrinho de Compras -->
