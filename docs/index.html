@@ -107,6 +107,8 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
 .loja .fat{font-size:17px;font-weight:700;white-space:nowrap}
 .badge{display:inline-block;font-size:11px;padding:2px 7px;border-radius:6px;margin-left:6px}
 .badge.alerta{background:rgba(239,68,68,.15);color:var(--red-soft)}
+/* "sem contagem" é pendência de cadastro, não urgência — fica discreto de propósito. */
+.pend{color:var(--muted);opacity:.85}
 
 /* -------- SEC / TOP -------- */
 .sec-title{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
@@ -142,12 +144,20 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
 /* -------- ESTOQUE -------- */
 .estq-header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
 .estq-header select{flex:1;min-width:0}
-.estq-filters{display:flex;gap:8px;margin-bottom:14px}
+/* Cinco filtros não cabem numa linha no celular, então a faixa quebra e cada botão
+   ocupa a largura do próprio texto em vez de dividir a linha em partes iguais. */
+.estq-filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .estq-filters button{
-  flex:1;padding:11px 6px;
+  flex:1 1 auto;padding:11px 12px;
   background:var(--card);border:1px solid var(--line);
   color:var(--muted);font-size:13px;border-radius:10px;min-height:44px;
 }
+.estq-resumo{font-size:12px;margin:-4px 0 12px;line-height:1.5}
+/* Situação do produto na lista. "Sem contagem" é discreta: é pendência, não urgência. */
+.sit{display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;margin-left:6px;text-transform:uppercase;letter-spacing:.3px}
+.sit.acabou{background:rgba(239,68,68,.15);color:var(--red-soft)}
+.sit.baixo{background:rgba(245,158,11,.15);color:var(--accent)}
+.sit.sem{background:rgba(154,163,178,.12);color:var(--muted)}
 .estq-filters button.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .prod-badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:5px;margin-left:6px;vertical-align:middle;text-transform:uppercase;letter-spacing:.3px}
 .prod-badge.prod{background:rgba(245,158,11,.15);color:var(--accent)}
@@ -328,7 +338,11 @@ button{cursor:pointer;border:none;border-radius:10px;font-weight:600;font-size:1
         <button data-f="TODOS" class="on">Todos</button>
         <button data-f="COMERCIAIS">Comerciais</button>
         <button data-f="PRODUCAO">Produção</button>
+        <button data-f="REPOR">Repor</button>
+        <button data-f="SEM_CONTAGEM">Sem contagem</button>
       </div>
+
+      <div class="estq-resumo muted" id="estqResumo"></div>
 
       <div class="card" id="estqCard">
         <div class="muted" style="padding:8px 0">Selecione uma loja acima.</div>
@@ -517,8 +531,8 @@ function renderDash(d){
   $('lojas').innerHTML = (d.lojas||[]).map(l=>`
     <div class="loja">
       <div>
-        <div class="nome">${l.nome}${l.estoque_baixo>0?`<span class="badge alerta">${l.estoque_baixo} em falta</span>`:''}</div>
-        <div class="meta">${l.vendas_qtd} venda(s) · ${l.estoque_produtos} produtos</div>
+        <div class="nome">${l.nome}${badgeEstoque(l)}</div>
+        <div class="meta">${l.vendas_qtd} venda(s) · ${l.estoque_produtos} produtos${l.estoque_sem_lancamento>0?` · <span class="pend">${l.estoque_sem_lancamento} sem contagem</span>`:''}</div>
       </div>
       <div class="fat">${brl(l.faturamento_centavos)}</div>
     </div>`).join('');
@@ -592,25 +606,40 @@ function renderEstoque(){
 
   const busca = ($('estqBusca').value||'').trim().toLowerCase();
 
+  // Resumo por situação, sempre sobre a lista inteira (não sobre o filtro atual),
+  // para o dono ver de relance o que pede ação e o que é só cadastro pendente.
+  const conta = { ACABOU:0, BAIXO:0, SEM_LANCAMENTO:0, OK:0 };
+  prods.forEach(p => { const s = situacaoDe(p); conta[s] = (conta[s]||0) + 1; });
+  const repor = conta.ACABOU + conta.BAIXO;
+  $('estqResumo').innerHTML =
+    (repor ? `<b style="color:var(--red-soft)">${repor} para repor</b> · ` : '')
+    + `${conta.OK} com estoque`
+    + (conta.SEM_LANCAMENTO ? ` · ${conta.SEM_LANCAMENTO} nunca contados` : '');
+
   // Mantém o índice ORIGINAL (para salvarItem casar com window._estqProds)
   const visiveis = prods
     .map((p,i)=>({p,i}))
     .filter(({p})=>{
+      const sit = situacaoDe(p);
       if(estqFiltro==='COMERCIAIS' && ehProducao(p.tipo)) return false;
       if(estqFiltro==='PRODUCAO'   && !ehProducao(p.tipo)) return false;
+      if(estqFiltro==='REPOR'        && !(sit==='ACABOU' || sit==='BAIXO')) return false;
+      if(estqFiltro==='SEM_CONTAGEM' && sit!=='SEM_LANCAMENTO') return false;
       if(busca && !(p.nome||'').toLowerCase().includes(busca)) return false;
       return true;
     });
 
   if(!visiveis.length){
-    $('estqCard').innerHTML='<div class="muted" style="padding:8px 0">Nenhum produto neste filtro.</div>';
+    $('estqCard').innerHTML = estqFiltro==='REPOR'
+      ? '<div class="muted" style="padding:8px 0">Nada para repor. Nenhum produto acabou nem está abaixo do mínimo.</div>'
+      : '<div class="muted" style="padding:8px 0">Nenhum produto neste filtro.</div>';
     return;
   }
 
   $('estqCard').innerHTML = visiveis.map(({p,i})=>`
     <div class="prod-row" data-i="${i}" data-pid="${p.productId}" data-orig="${p.quantidade}">
       <div class="prod-info">
-        <div class="prod-nome">${p.nome}${etiquetaTipo(p.tipo)}</div>
+        <div class="prod-nome">${p.nome}${etiquetaTipo(p.tipo)}${etiquetaSituacao(p)}</div>
         <div class="prod-meta">${p.unitMeasure} · mín ${p.minimo}</div>
       </div>
       <input type="number" class="qty-input" value="${p.quantidade}" min="0" step="${p.unitMeasure==='KG'?'0.001':'1'}" data-i="${i}" />
@@ -1062,6 +1091,46 @@ async function carregarPao(){
         </div>
       </div>`;
   }).join('');
+}
+
+// Situação de um produto numa loja. Vem calculada pelo servidor (get_loja_estoque);
+// o cálculo local é só rede de segurança e repete exatamente a mesma regra.
+//
+// A distinção que importa: zerado porque ACABOU (já foi lançado alguma vez e vendeu tudo)
+// é diferente de zerado porque NUNCA foi contado. O primeiro é reposição; o segundo é
+// cadastro pendente. Tratar os dois como "em falta" foi o que encheu o alerta de ruído.
+function situacaoDe(p){
+  if(p.situacao) return p.situacao;
+  const q = Number(p.quantidade)||0;
+  const m = Number(p.minimo)||0;
+  if(q <= 0)          return p.jaLancado ? 'ACABOU' : 'SEM_LANCAMENTO';
+  if(m > 0 && q <= m) return 'BAIXO';
+  return 'OK';
+}
+
+function etiquetaSituacao(p){
+  switch(situacaoDe(p)){
+    case 'ACABOU':         return '<span class="sit acabou">acabou</span>';
+    case 'BAIXO':          return '<span class="sit baixo">no mínimo</span>';
+    case 'SEM_LANCAMENTO': return '<span class="sit sem">sem contagem</span>';
+    default:               return '';
+  }
+}
+
+// Badge de estoque da loja no dashboard.
+//
+// O alerta conta SÓ o que pede ação: produto que acabou (já foi lançado alguma vez e
+// hoje está zerado) e produto abaixo do mínimo. Produto que nunca teve contagem inicial
+// fica de fora — ele aparece como "sem contagem", em cinza, ao lado do total.
+// Antes tudo isso ia junto e o badge dizia "111 em falta" de 115 produtos, um alerta que
+// nunca ficava limpo e que por isso ninguém olhava mais.
+function badgeEstoque(l){
+  const acabou = l.estoque_acabou || 0;
+  const baixo  = l.estoque_baixo  || 0;
+  const partes = [];
+  if(acabou) partes.push(`${acabou} acabou`);
+  if(baixo)  partes.push(`${baixo} no mínimo`);
+  return partes.length ? `<span class="badge alerta">${partes.join(' · ')}</span>` : '';
 }
 
 // Quantidades podem ser fracionadas (peso), mas pão é unidade — mostra inteiro quando for.

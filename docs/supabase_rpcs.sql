@@ -808,3 +808,33 @@ BEGIN
   RETURN jsonb_build_object('linhas', v_linhas);
 END;
 $$;
+
+
+-- ============================================================
+-- ALERTA DE ESTOQUE: "acabou" nao e a mesma coisa que "nunca foi contado"
+--
+-- get_dashboard_rede contava o alerta como "sp.quantity <= sp.minStock". Como NENHUM
+-- produto tem minimo definido (minStock = 0 nas tres lojas), qualquer produto zerado
+-- satisfazia 0 <= 0: 111 de 115 produtos na Padaria Centro apareciam como "em falta".
+-- Um alerta que nunca fica limpo deixa de ser alerta -- o dono parou de olhar.
+--
+-- A maioria daqueles 111 nao tinha acabado: nunca teve estoque lancado, porque a loja
+-- ainda nao fez a contagem inicial. Sao coisas diferentes:
+--
+--   ACABOU          zerado e JA teve lancamento nesta loja  -> repor (alerta de verdade)
+--   BAIXO           0 < quantidade <= minimo, minimo > 0    -> repor antes de acabar
+--   SEM_LANCAMENTO  zerado e nunca lancado                  -> contagem pendente, nao e urgencia
+--   OK              tem estoque acima do minimo
+--
+-- "Ja teve lancamento" precisa olhar StockMovement E OwnerStockAdjustment:
+-- ajustar_estoque grava um StockMovement, mas set_estoque_loja (lancamento em lote pelo
+-- painel) grava SO o OwnerStockAdjustment. Olhando uma tabela so, todo produto lancado
+-- em lote seria classificado como "nunca contado".
+--
+-- get_dashboard_rede devolve por loja: estoque_baixo, estoque_acabou,
+-- estoque_sem_lancamento e estoque_alerta (= baixo + acabou, o numero que pede acao).
+-- get_loja_estoque devolve 'situacao' e 'jaLancado' por produto, para a aba Estoque
+-- filtrar por "Repor" e por "Sem contagem".
+--
+-- Definicoes completas: migrations dashboard_separa_acabou_de_nunca_lancado e
+-- loja_estoque_classifica_situacao.
