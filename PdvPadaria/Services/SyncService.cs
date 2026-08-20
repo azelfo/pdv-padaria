@@ -49,6 +49,117 @@ namespace PdvPadaria.Services
             _supabaseAnonKey = EnvService.Get("SUPABASE_ANON_KEY");
         }
 
+        #region Conferência da identidade da loja (token x STORE_ID)
+
+        /// <summary>
+        /// Traduz o CORPO de uma resposta das RPCs de escrita (push_vendas / push_estoque)
+        /// em uma mensagem de erro, ou null se a gravação foi aceita.
+        ///
+        /// Existe porque essas funções devolvem HTTP 200 mesmo quando recusam o envio: o
+        /// motivo vem dentro do JSON, em {"error": "..."}. Enquanto o PDV olhava só o status
+        /// HTTP, uma recusa passava por sucesso — as vendas eram marcadas como enviadas e
+        /// apagadas da fila, e o estoque nunca chegava ao painel.
+        /// </summary>
+        private static string? ErroDaResposta(string corpo)
+        {
+            if (string.IsNullOrWhiteSpace(corpo)) return null;
+
+            string codigo;
+            try
+            {
+                var obj = JsonConvert.DeserializeObject<Newtonsoft.Json.Linq.JToken>(corpo);
+                // A RPC pode voltar como objeto ou dentro de um array de uma posição.
+                if (obj is Newtonsoft.Json.Linq.JArray arr) obj = arr.First;
+                codigo = (obj as Newtonsoft.Json.Linq.JObject)?["error"]?.ToString() ?? string.Empty;
+            }
+            catch
+            {
+                return null; // corpo não-JSON: deixa passar, o status HTTP já cuidou disso
+            }
+
+            if (string.IsNullOrEmpty(codigo)) return null;
+
+            if (codigo == "invalid_token")
+                return "O TOKEN DE SINCRONIZACAO desta maquina nao vale mais. " +
+                       "Enquanto isso, NENHUMA venda e NENHUM estoque deste caixa sobe para a nuvem. " +
+                       "Corrija a linha STORE_SYNC_TOKEN no arquivo .env desta maquina.";
+
+            return $"A nuvem recusou o envio: {codigo}";
+        }
+
+        /// <summary>
+        /// Pergunta à nuvem de QUAL loja é o token desta máquina e compara com o STORE_ID
+        /// do .env. Devolve (ok, mensagem) — mensagem já em português, pronta para a tela.
+        ///
+        /// Os dois valores são independentes no .env e nada os amarrava: o token manda em
+        /// TUDO que é escrito (o servidor carimba a loja a partir dele) e o STORE_ID manda
+        /// em TUDO que é lido (produtos da loja, config do pão e os ajustes de estoque do
+        /// dono). Trocar um sem o outro deixa o caixa vendendo por uma loja e lendo o
+        /// estoque de outra, sem nenhum aviso.
+        /// </summary>
+        public async Task<(bool Ok, string Mensagem)> ConferirIdentidadeDaLojaAsync(string storeIdEsperado)
+        {
+            if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
+                return (false, "SUPABASE_URL ou SUPABASE_ANON_KEY faltando no arquivo .env desta maquina.");
+
+            string storeToken = EnvService.Get("STORE_SYNC_TOKEN");
+            if (string.IsNullOrEmpty(storeToken))
+                return (false, "Falta o STORE_SYNC_TOKEN no arquivo .env desta maquina. " +
+                               "As vendas e o estoque deste caixa NAO sobem para a nuvem.");
+
+            if (string.IsNullOrEmpty(storeIdEsperado))
+                return (false, "Falta o STORE_ID no arquivo .env desta maquina. " +
+                               "O caixa nao consegue baixar o estoque lancado pelo dono.");
+
+            try
+            {
+                var requestBody = JsonConvert.SerializeObject(new { p_token = storeToken });
+                var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+                var url = $"{_supabaseUrl.TrimEnd('/')}/rest/v1/rpc/loja_do_token";
+
+                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    request.Content = content;
+                    request.Headers.Add("apikey", _supabaseAnonKey);
+                    request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
+
+                    var response = await _httpClient.SendAsync(request);
+                    string corpo = (await response.Content.ReadAsStringAsync()).Trim();
+
+                    // Offline ou nuvem fora do ar: não é erro de configuração, não assusta o caixa.
+                    if (!response.IsSuccessStatusCode)
+                        return (true, string.Empty);
+
+                    string lojaDoToken = corpo.Trim('"');
+
+                    if (string.IsNullOrEmpty(lojaDoToken) || lojaDoToken == "null")
+                        return (false, "O TOKEN DE SINCRONIZACAO desta maquina nao vale mais. " +
+                                       "Enquanto isso, NENHUMA venda e NENHUM estoque deste caixa sobe " +
+                                       "para a nuvem. Peca o token novo desta loja e troque a linha " +
+                                       "STORE_SYNC_TOKEN no arquivo .env.");
+
+                    if (!string.Equals(lojaDoToken, storeIdEsperado, StringComparison.OrdinalIgnoreCase))
+                        return (false, "Esta maquina esta com a identidade TROCADA: o token e de uma loja " +
+                                       "e o STORE_ID e de outra.\n\n" +
+                                       $"STORE_ID no .env:      {storeIdEsperado}\n" +
+                                       $"Loja dona do token:    {lojaDoToken}\n\n" +
+                                       "As vendas deste caixa estao sendo lancadas na loja do TOKEN, " +
+                                       "e o estoque que ele mostra e o da loja do STORE_ID. " +
+                                       "Acerte as duas linhas do arquivo .env para a MESMA loja.");
+
+                    return (true, string.Empty);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Falha de rede não vira alarme de configuração.
+                System.Diagnostics.Debug.WriteLine($"[ConferirIdentidadeDaLoja]: {ex.Message}");
+                return (true, string.Empty);
+            }
+        }
+
+        #endregion
+
         #region Métodos de Push (Envio de Vendas locais para a Nuvem)
 
         /// <summary>
@@ -189,11 +300,24 @@ namespace PdvPadaria.Services
                     request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
 
                     var response = await _httpClient.SendAsync(request);
+                    string corpo = await response.Content.ReadAsStringAsync();
+
                     if (!response.IsSuccessStatusCode)
                     {
-                        string errorBody = await response.Content.ReadAsStringAsync();
-                        LastError = $"Erro HTTP {response.StatusCode} no push_vendas: {errorBody}";
+                        LastError = $"Erro HTTP {response.StatusCode} no push_vendas: {corpo}";
                         System.Diagnostics.Debug.WriteLine($"[Supabase RPC Error]: {LastError}");
+                        return false;
+                    }
+
+                    // A funcao push_vendas devolve HTTP 200 mesmo quando RECUSA o envio
+                    // (ex.: {"error":"invalid_token"}). Confiar so no status HTTP fazia o
+                    // PDV marcar as vendas como sincronizadas e nunca mais tentar de novo:
+                    // a venda sumia de vez. O erro tem que vir do CORPO da resposta.
+                    string? erroRpc = ErroDaResposta(corpo);
+                    if (erroRpc != null)
+                    {
+                        LastError = erroRpc;
+                        System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_vendas recusado]: {corpo}");
                         return false;
                     }
                     return true;
@@ -223,13 +347,21 @@ namespace PdvPadaria.Services
             if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
                 return false;
             if (string.IsNullOrEmpty(storeId))
+            {
+                LastError = "STORE_ID ausente no .env desta maquina: o caixa nao sabe de que loja ele e.";
                 return false;
+            }
 
             // Token secreto da loja (autoriza a escrita do estoque na nuvem; o servidor deriva a loja
-            // dele, ignorando qualquer storeId do payload). Máquina ainda sem token no .env pula sem erro.
+            // dele, ignorando qualquer storeId do payload). Sem token o estoque desta loja NUNCA
+            // chega ao painel do dono, entao isto e uma falha e precisa aparecer na tela — antes
+            // devolvia "true" e o caixa exibia "Sincronizado" em verde com o estoque parado.
             string storeToken = EnvService.Get("STORE_SYNC_TOKEN");
             if (string.IsNullOrEmpty(storeToken))
-                return true;
+            {
+                LastError = "STORE_SYNC_TOKEN ausente no .env desta maquina: o estoque desta loja nao sobe para o painel.";
+                return false;
+            }
 
             try
             {
@@ -258,11 +390,23 @@ namespace PdvPadaria.Services
                     request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
 
                     var response = await _httpClient.SendAsync(request);
+                    string corpo = await response.Content.ReadAsStringAsync();
+
                     if (!response.IsSuccessStatusCode)
                     {
-                        string errorBody = await response.Content.ReadAsStringAsync();
-                        LastError = $"Erro HTTP {response.StatusCode} no push_estoque: {errorBody}";
+                        LastError = $"Erro HTTP {response.StatusCode} no push_estoque: {corpo}";
                         System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_estoque Error]: {LastError}");
+                        return false;
+                    }
+
+                    // Mesma armadilha do push_vendas: {"error":"invalid_token","stock":0} vem com
+                    // HTTP 200. Sem ler o corpo, a foto do estoque era descartada em silencio e o
+                    // painel do dono ficava congelado no ultimo numero que ele mesmo lancou.
+                    string? erroRpc = ErroDaResposta(corpo);
+                    if (erroRpc != null)
+                    {
+                        LastError = erroRpc;
+                        System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_estoque recusado]: {corpo}");
                         return false;
                     }
                     return true;

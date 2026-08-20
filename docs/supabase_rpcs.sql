@@ -838,3 +838,36 @@ $$;
 --
 -- Definicoes completas: migrations dashboard_separa_acabou_de_nunca_lancado e
 -- loja_estoque_classifica_situacao.
+
+-- ============================================================
+-- CONTRATO DAS RPCs DE ESCRITA: erro vem no CORPO, com HTTP 200
+--
+-- push_vendas e push_estoque RETORNAM json_build_object('error', ...) quando
+-- recusam o envio (token invalido). Para o PostgREST isso e uma chamada de
+-- funcao bem-sucedida: o HTTP e 200. Quem consome PRECISA ler o corpo.
+--
+-- O PDV olhava so o status HTTP. Resultado, em producao: um caixa com token
+-- vencido recebia 200, dava a venda por enviada, marcava isSynced=true no
+-- SQLite e nunca mais tentava -- a venda sumia. E a foto do estoque era
+-- descartada em silencio, com o caixa exibindo "Sincronizado" em verde.
+-- Corrigido em SyncService.ErroDaResposta (app 1.1.3).
+--
+-- Ao criar uma RPC nova que possa RECUSAR, mantenha o mesmo formato
+-- ('error', <codigo>) e trate o codigo no cliente.
+-- ============================================================
+
+-- ============================================================
+-- IDENTIDADE DA MAQUINA: STORE_ID e STORE_SYNC_TOKEN sao INDEPENDENTES
+--
+-- O token manda em tudo que o PDV ESCREVE (push_vendas/push_estoque derivam a
+-- loja dele, ignorando o payload). O STORE_ID do .env manda em tudo que ele LE
+-- (StoreProduct, BreadConfig, OwnerStockAdjustment). Nada amarrava os dois.
+--
+-- Uma maquina com as duas linhas apontando para lojas DIFERENTES vende por uma
+-- loja e mostra o estoque de outra, sem erro nenhum na tela -- o sintoma que o
+-- usuario relata e "o estoque do PDV nao atualiza". Aconteceu em 20/08/2026.
+--
+-- loja_do_token e SECURITY DEFINER com EXECUTE para anon exatamente para o PDV
+-- poder conferir isso sozinho na abertura (SyncService.ConferirIdentidadeDaLojaAsync).
+-- Nao remova esse GRANT.
+-- ============================================================

@@ -280,8 +280,41 @@ namespace PdvPadaria
             // Roda a primeira sincronização assim que abre
             await RunSincronizacaoSilenciosa();
 
+            // Confere, uma vez por abertura, se o token e o STORE_ID desta máquina apontam
+            // para a MESMA loja. É a checagem que faltava: token e STORE_ID são linhas
+            // separadas do .env, e uma máquina com as duas trocadas vende por uma loja e
+            // lê o estoque de outra sem nada na tela denunciando isso.
+            await ConferirIdentidadeDaLojaAsync();
+
             // Checagem de atualização em background — não atrasa a abertura do caixa.
             _ = CheckForUpdateAsync();
+        }
+
+        // Avisa o operador, em português claro, quando a configuração desta máquina está
+        // impedindo o estoque/as vendas de circularem. Só fala quando há problema real de
+        // configuração: estar sem internet não dispara aviso nenhum.
+        private async Task ConferirIdentidadeDaLojaAsync()
+        {
+            try
+            {
+                using var syncService = new SyncService(App.Database.GetSyncConnection());
+                string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+
+                var (ok, mensagem) = await syncService.ConferirIdentidadeDaLojaAsync(storeId);
+                if (ok || string.IsNullOrEmpty(mensagem)) return;
+
+                SyncStatusText.Text = "Configuracao da loja com problema";
+                SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Red;
+
+                MessageBox.Show(
+                    mensagem + "\n\nO caixa continua vendendo normalmente e nada se perde: " +
+                    "as vendas ficam guardadas nesta maquina ate a configuracao ser corrigida.",
+                    "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ConferirIdentidadeDaLoja]: {ex.Message}");
+            }
         }
 
         // Verifica se há versão nova (docs/version.json no GitHub) e oferece atualizar.
@@ -4217,16 +4250,24 @@ namespace PdvPadaria
 
                 var pendingCount = await App.Database.GetConnection().Table<Sale>().Where(s => !s.IsSynced).CountAsync();
 
+                // O verde depende TAMBEM do stockSuccess. Antes bastava venda+cadastro terem
+                // subido: o caixa mostrava "Sincronizado" enquanto a foto do estoque era
+                // recusada pela nuvem e o painel do dono ficava congelado.
                 Dispatcher.Invoke(() => {
                     if (pendingCount > 0)
                     {
                         SyncStatusText.Text = $"{pendingCount} venda(s) pendente(s)";
                         SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Yellow;
                     }
-                    else if (pushSuccess && pullSuccess)
+                    else if (pushSuccess && pullSuccess && stockSuccess)
                     {
                         SyncStatusText.Text = "Sincronizado";
                         SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Green;
+                    }
+                    else
+                    {
+                        SyncStatusText.Text = "Estoque NAO subiu";
+                        SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Red;
                     }
                 });
 

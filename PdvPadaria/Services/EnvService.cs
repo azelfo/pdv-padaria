@@ -69,10 +69,21 @@ namespace PdvPadaria.Services
             }
         }
 
+        // Valor EM BRANCO conta como AUSENTE, e nao como "configurado com vazio".
+        //
+        // O .env.exemplo que vai no instalador traz as chaves com o valor vazio
+        // (STORE_ID=, STORE_SYNC_TOKEN=). Numa maquina onde alguem esqueceu de
+        // preencher uma linha, a chave EXISTE no dicionario, entao o TryGetValue
+        // devolvia "" e o defaultValue (o valor vindo do usuario logado) nunca era
+        // usado. Resultado: o PDV consultava a nuvem com storeId vazio, recebia
+        // lista vazia de ajustes do dono e o estoque local nunca mais mudava --
+        // sem nenhuma mensagem de erro, porque uma resposta vazia e um 200 valido.
         public static string Get(string key, string defaultValue = "")
         {
             Load();
-            return _envVars.TryGetValue(key, out string? value) ? value : defaultValue;
+            if (_envVars.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value))
+                return value;
+            return defaultValue;
         }
     }
 }

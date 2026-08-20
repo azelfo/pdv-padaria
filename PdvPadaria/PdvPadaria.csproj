@@ -20,9 +20,9 @@
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <!-- Fonte da verdade da versão do app (lida em runtime pelo UpdateService).
          Bump aqui + em PdvPadaria\setup.iss (AppVersion) a cada release. -->
-    <Version>1.1.2</Version>
-    <AssemblyVersion>1.1.2.0</AssemblyVersion>
-    <FileVersion>1.1.2.0</FileVersion>
+    <Version>1.1.3</Version>
+    <AssemblyVersion>1.1.3.0</AssemblyVersion>
+    <FileVersion>1.1.3.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
