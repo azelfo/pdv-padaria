@@ -1,5 +1,5 @@
 {
-  "version": "1.1.2",
+  "version": "1.1.3",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "notes": "No lancamento de pao, escolher o tipo agora e por F1 e F2 em vez de 1 e 2. As teclas de numero atrapalhavam a digitacao: o primeiro digito do valor era engolido pela selecao, entao quem digitava 15,00 acabava lancando 5,00. A tela de Alertas de Estoque tambem passa a separar produto que ACABOU (ja foi lancado e zerou) de produto que nunca teve contagem inicial - antes os dois iam juntos e o alerta mostrava 111 de 115 produtos. Esta atualizacao NAO altera a configuracao da loja."
+  "notes": "Correcao do estoque que nao atualizava. O caixa dava a sincronizacao por feita mesmo quando a nuvem recusava o envio: as vendas eram marcadas como enviadas sem nunca terem subido, e a foto do estoque era descartada em silencio, com a luz verde de Sincronizado ligada. Agora o caixa le o motivo da recusa, mantem a venda na fila e so acende o verde quando o estoque tambem sobe. Ao abrir, ele tambem confere se as duas linhas de identidade desta maquina (STORE_ID e STORE_SYNC_TOKEN, no arquivo .env) sao da MESMA loja - se estiverem trocadas, o caixa vende por uma loja e mostra o estoque de outra, e agora isso aparece na tela em vez de passar batido. Esta atualizacao NAO altera a configuracao da loja. Se aparecer um aviso amarelo logo depois de instalar, e essa conferencia nova achando um problema que ja existia: avise o responsavel."
 }
