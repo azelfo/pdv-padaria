@@ -317,19 +317,24 @@ namespace PdvPadaria
                     return;
                 }
 
-                // Divergência não quebra mais nada — o token manda dos dois lados — mas a linha
-                // errada no .env volta a confundir quem for mexer na configuracao depois.
+                // O caixa agora le e grava pela MESMA loja, entao nada sai torto por causa da
+                // divergencia. Mas ela continua sendo um alarme importante: as duas linhas
+                // foram preenchidas com lojas diferentes, e nao da para saber daqui QUAL das
+                // duas e a errada. Se quem errou foi o token, esta maquina esta lancando as
+                // vendas dela na loja do vizinho — por isso o aviso nao afirma que esta tudo
+                // certo, e manda confirmar com o responsavel em vez de escolher um lado.
                 if (StoreIdentityService.EnvDivergente)
                 {
                     MessageBox.Show(
-                        "A linha STORE_ID do arquivo .env desta maquina aponta para OUTRA loja e " +
-                        "foi ignorada. Quem manda e o token, e por ele esta maquina e a loja abaixo." +
+                        "Esta maquina tem duas configuracoes de loja que NAO combinam." +
                         "\n\n" +
-                        $"Loja em uso (pelo token):  {StoreIdentityService.StoreId}\n" +
-                        $"STORE_ID escrito no .env:  {StoreIdentityService.StoreIdDoEnv}" +
-                        "\n\nO caixa esta funcionando certo. Mesmo assim, vale acertar essa linha " +
-                        "do .env para a mesma loja, para ninguem se perder depois.",
-                        "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Information);
+                        $"Loja em uso (vem do token):  {StoreIdentityService.StoreId}\n" +
+                        $"STORE_ID escrito no .env:    {StoreIdentityService.StoreIdDoEnv}" +
+                        "\n\nO caixa esta usando a loja do TOKEN para tudo: e nela que as vendas " +
+                        "deste caixa entram e e o estoque dela que aparece aqui." +
+                        "\n\nConfirme com o responsavel de qual loja e esta maquina. Se o token " +
+                        "estiver errado, as vendas de hoje estao entrando na loja errada.",
+                        "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
             catch (Exception ex)
