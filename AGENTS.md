@@ -15,8 +15,10 @@ This repository is a **WPF desktop application** (C#, `net8.0-windows`) living i
 
 - **Design tokens:** colors/typography live in `PdvPadaria/App.xaml` (XAML `{StaticResource ...}`) and `Services/AppColors.cs` (code-behind). Do **not** hardcode hex in XAML or `new SolidColorBrush(...)` in C#. Dark theme, amber accent `#F59E0B`.
 - **Money:** stored and computed in **centavos** (int). Convert only for display.
-- **Config:** `PdvPadaria/.env` (gitignored) supplies exactly six keys — `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TENANT_ID`, `STORE_ID`, `STORE_SYNC_TOKEN`, `TERMINAL_NAME`. Read via `Services/EnvService.cs`.
-  **Never package `.env` in the installer.** `STORE_SYNC_TOKEN` is the write credential for the sync RPCs and `STORE_ID` is the machine's store identity; the installer is published in a public repo, and shipping it both leaked the token and would stamp every store with the builder's identity. `setup.iss` excludes it and ships `.env.exemplo` with `onlyifdoesntexist`.
+- **Config:** `PdvPadaria/.env` (gitignored) supplies six keys — `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TENANT_ID`, `STORE_SYNC_TOKEN`, `TERMINAL_NAME`, and an optional `STORE_ID`. Read via `Services/EnvService.cs`, which treats a **blank value as absent** so the caller's fallback applies (`.env.exemplo` ships the keys empty).
+  **Which store a machine is** comes from `STORE_SYNC_TOKEN` alone, resolved through `Services/StoreIdentityService.cs` (RPC `loja_do_token`, cached to `%AppData%/pdv-padaria/loja-identidade.txt` for offline boots). `STORE_ID` is only a first-boot-offline fallback. Until 2026-08-20 the two were independent — the token decided where writes landed, `STORE_ID` decided what the caixa read — and a machine with them set to different stores sold as one store while showing another's stock, silently. Don't reintroduce a read path that trusts `STORE_ID` over the token.
+  **Never package `.env` in the installer.** `STORE_SYNC_TOKEN` is the write credential for the sync RPCs; the installer is published in a public repo, and shipping it both leaked the token and would stamp every store with the builder's identity. `setup.iss` excludes it and ships `.env.exemplo` with `onlyifdoesntexist`.
+- **Sync RPCs refuse with HTTP 200.** `push_vendas` / `push_estoque` return `{"error": "..."}` as a normal result, so the status code is 200 either way. Always read the body (`SyncService.ErroDaResposta`) — trusting the status made the PDV mark unsent sales as synced and drop them.
 
 ## Build
 

@@ -156,7 +156,7 @@ namespace PdvPadaria.Views
                 if (isOnlineSuccess && user != null)
                 {
                     string tenantId = EnvService.Get("TENANT_ID", user.TenantId);
-                    string storeId = EnvService.Get("STORE_ID", user.StoreId ?? "store-test");
+                    string storeId = StoreIdentityService.Atual(user.StoreId ?? "store-test");
 
                     _ = Task.Run(async () =>
                     {

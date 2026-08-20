@@ -55,15 +55,21 @@ namespace PdvPadaria
                 Database = new DatabaseService();
                 await Database.InitializeAsync();
 
-                // Tenta puxar atualizações cadastrais da nuvem de forma assíncrona em background
+                // Tenta puxar atualizações cadastrais da nuvem de forma assíncrona em background.
+                // A loja vem do TOKEN desta máquina (StoreIdentityService), não da linha
+                // STORE_ID: é o token que decide onde a venda cai, então é ele que precisa
+                // decidir também qual estoque o caixa lê.
                 string tenantId = EnvService.Get("TENANT_ID");
-                string storeId = EnvService.Get("STORE_ID");
-                if (!string.IsNullOrEmpty(tenantId) && !string.IsNullOrEmpty(storeId))
+                if (!string.IsNullOrEmpty(tenantId))
                 {
                     _ = Task.Run(async () =>
                     {
                         try
                         {
+                            await StoreIdentityService.ResolverAsync();
+                            string storeId = StoreIdentityService.Atual();
+                            if (string.IsNullOrEmpty(storeId)) return;
+
                             using var syncService = new SyncService(Database.GetSyncConnection());
                             await syncService.PullUpdatesAsync(tenantId, storeId);
                         }

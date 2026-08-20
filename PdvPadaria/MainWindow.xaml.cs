@@ -277,43 +277,64 @@ namespace PdvPadaria
             _syncTimer.Tick += async (s, ev) => await RunSincronizacaoSilenciosa();
             _syncTimer.Start();
 
+            // Descobre de que loja é esta máquina ANTES do primeiro sync: quem manda é o
+            // token, e é dele que sai também o estoque que o caixa vai mostrar. Sem isto,
+            // o primeiro ciclo ainda leria pela linha STORE_ID do .env.
+            await StoreIdentityService.ResolverAsync(CurrentUser.StoreId);
+            AvisarSeIdentidadeEstiverErrada();
+
             // Roda a primeira sincronização assim que abre
             await RunSincronizacaoSilenciosa();
-
-            // Confere, uma vez por abertura, se o token e o STORE_ID desta máquina apontam
-            // para a MESMA loja. É a checagem que faltava: token e STORE_ID são linhas
-            // separadas do .env, e uma máquina com as duas trocadas vende por uma loja e
-            // lê o estoque de outra sem nada na tela denunciando isso.
-            await ConferirIdentidadeDaLojaAsync();
 
             // Checagem de atualização em background — não atrasa a abertura do caixa.
             _ = CheckForUpdateAsync();
         }
 
         // Avisa o operador, em português claro, quando a configuração desta máquina está
-        // impedindo o estoque/as vendas de circularem. Só fala quando há problema real de
+        // impedindo venda e estoque de circularem. Só fala quando há problema real de
         // configuração: estar sem internet não dispara aviso nenhum.
-        private async Task ConferirIdentidadeDaLojaAsync()
+        private void AvisarSeIdentidadeEstiverErrada()
         {
             try
             {
-                using var syncService = new SyncService(App.Database.GetSyncConnection());
-                string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+                if (StoreIdentityService.TokenAusente || StoreIdentityService.TokenInvalido)
+                {
+                    SyncStatusText.Text = "Token da loja invalido";
+                    SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Red;
 
-                var (ok, mensagem) = await syncService.ConferirIdentidadeDaLojaAsync(storeId);
-                if (ok || string.IsNullOrEmpty(mensagem)) return;
+                    string motivo = StoreIdentityService.TokenAusente
+                        ? "Falta a linha STORE_SYNC_TOKEN no arquivo .env desta maquina."
+                        : "O TOKEN DE SINCRONIZACAO desta maquina nao vale mais.";
 
-                SyncStatusText.Text = "Configuracao da loja com problema";
-                SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Red;
+                    MessageBox.Show(
+                        motivo + "\n\n" +
+                        "Enquanto isso, NENHUMA venda e NENHUM estoque deste caixa sobe para a nuvem." +
+                        "\n\nO caixa continua vendendo normalmente e nada se perde: as vendas ficam " +
+                        "guardadas aqui e sobem sozinhas assim que o token for corrigido." +
+                        "\n\nPeca o token desta loja ao responsavel e corrija a linha " +
+                        "STORE_SYNC_TOKEN do arquivo .env.",
+                        "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
 
-                MessageBox.Show(
-                    mensagem + "\n\nO caixa continua vendendo normalmente e nada se perde: " +
-                    "as vendas ficam guardadas nesta maquina ate a configuracao ser corrigida.",
-                    "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Warning);
+                // Divergência não quebra mais nada — o token manda dos dois lados — mas a linha
+                // errada no .env volta a confundir quem for mexer na configuracao depois.
+                if (StoreIdentityService.EnvDivergente)
+                {
+                    MessageBox.Show(
+                        "A linha STORE_ID do arquivo .env desta maquina aponta para OUTRA loja e " +
+                        "foi ignorada. Quem manda e o token, e por ele esta maquina e a loja abaixo." +
+                        "\n\n" +
+                        $"Loja em uso (pelo token):  {StoreIdentityService.StoreId}\n" +
+                        $"STORE_ID escrito no .env:  {StoreIdentityService.StoreIdDoEnv}" +
+                        "\n\nO caixa esta funcionando certo. Mesmo assim, vale acertar essa linha " +
+                        "do .env para a mesma loja, para ninguem se perder depois.",
+                        "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[ConferirIdentidadeDaLoja]: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[AvisarSeIdentidadeEstiverErrada]: {ex.Message}");
             }
         }
 
@@ -1151,7 +1172,7 @@ namespace PdvPadaria
                 // Filtra pela loja e por ativo: sem isso o FirstOrDefault pegava qualquer
                 // linha da tabela — inclusive a semente local antiga — e o pão podia sair
                 // com a faixa de preço errada.
-                string storeIdPao = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+                string storeIdPao = StoreIdentityService.Atual(CurrentUser.StoreId);
                 var breadConfig = await connection.Table<BreadConfig>()
                     .Where(b => b.StoreId == storeIdPao && b.Active == true)
                     .FirstOrDefaultAsync();
@@ -1548,7 +1569,7 @@ namespace PdvPadaria
                 var saleId = Guid.NewGuid().ToString();
 
                 string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
-                string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+                string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
 
                 var terminalName = EnvService.Get("TERMINAL_NAME");
                 var sale = new Sale
@@ -2437,7 +2458,7 @@ namespace PdvPadaria
                             try
                             {
                                 string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
-                                string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+                                string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
 
                                 bool saldoNegativo = false;
                                 bool produtoSumiu = false;
@@ -4233,7 +4254,7 @@ namespace PdvPadaria
                 using var syncService = new SyncService(App.Database.GetSyncConnection());
 
                 string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
-                string storeId = EnvService.Get("STORE_ID", CurrentUser.StoreId);
+                string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
 
                 bool pushSuccess = await syncService.PushSalesAsync(tenantId, storeId);
                 bool pullSuccess = await syncService.PullUpdatesAsync(tenantId, storeId);
