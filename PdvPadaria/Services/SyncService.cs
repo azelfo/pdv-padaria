@@ -457,6 +457,7 @@ namespace PdvPadaria.Services
                                 System.Diagnostics.Debug.WriteLine($"[Ajuste: soma de vendas falhou]: {exVendas.Message}");
                             }
 
+                            double saldoAnterior = prod.LocalStockQuantity;
                             double saldoFinal = Math.Max(0, aj.Quantity - vendidoDepois);
 
                             if (aj.MinStock.HasValue)
@@ -467,6 +468,35 @@ namespace PdvPadaria.Services
                                 _dbConnection.Execute(
                                     "UPDATE Product SET LocalStockQuantity=? WHERE Id=?",
                                     saldoFinal, aj.ProductId);
+
+                            // Registra a entrada no histórico LOCAL. Antes o ajuste do dono
+                            // mudava o estoque calado: a loja recebia 275 pães e o caixa não
+                            // guardava nenhum registro de que entraram — justo o começo da
+                            // conferência de pão enviado x vendido.
+                            //
+                            // IsSynced=true de propósito: este movimento espelha um evento que
+                            // NASCEU na nuvem, e lá ele já existe (ajustar_estoque grava o
+                            // StockMovement, e o lançamento em lote grava o OwnerStockAdjustment).
+                            // Empurrá-lo de volta duplicaria a mesma entrada no histórico do dono.
+                            if (Math.Abs(saldoFinal - saldoAnterior) > 0.0001)
+                            {
+                                _dbConnection.Insert(new StockMovement
+                                {
+                                    Id = Guid.NewGuid().ToString(),
+                                    ProductId = aj.ProductId,
+                                    StoreId = storeId,
+                                    UserId = aj.CreatedBy ?? string.Empty,
+                                    TenantId = EnvService.Get("TENANT_ID"),
+                                    Type = saldoFinal >= saldoAnterior ? "ENTRADA" : "SAIDA",
+                                    Quantity = Math.Abs(saldoFinal - saldoAnterior),
+                                    Reason = "AJUSTE_DONO",
+                                    CreatedAt = aj.CreatedAt,
+                                    IsSynced = true,
+                                    SyncedAt = DateTime.Now,
+                                    BalanceBefore = saldoAnterior,
+                                    BalanceAfter = saldoFinal
+                                });
+                            }
                         }
 
                         _dbConnection.Insert(new AppliedOwnerAdjustment { Id = aj.Id });
@@ -541,6 +571,8 @@ namespace PdvPadaria.Services
         // Momento em que o dono lançou o número. É o que permite descontar apenas as
         // vendas ocorridas DEPOIS do lançamento (ver ApplyOwnerAdjustmentsAsync).
         public DateTime CreatedAt { get; set; }
+        // Quem lançou, para o movimento local sair com autor em vez de anônimo.
+        public string? CreatedBy { get; set; }
     }
 
     #endregion

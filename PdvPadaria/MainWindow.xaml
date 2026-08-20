@@ -1,4 +1,4 @@
-<Window x:Class="PdvPadaria.MainWindow"
+﻿<Window x:Class="PdvPadaria.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -1476,9 +1476,9 @@
                                 <Border Height="3" Background="{StaticResource Danger}" CornerRadius="12,12,0,0" VerticalAlignment="Top"/>
                                 <Border Padding="15" Margin="0,3,0,0">
                                     <StackPanel>
-                                        <TextBlock Text="PRODUTOS COM ESTOQUE ZERADO" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextSubtle}" Margin="0,0,0,8"/>
+                                        <TextBlock Text="PRODUTOS QUE ACABARAM" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextSubtle}" Margin="0,0,0,8"/>
                                         <TextBlock x:Name="AlertZeroStockCountText" Text="0 itens" FontSize="26" FontWeight="Black" Foreground="{StaticResource Danger}"/>
-                                        <TextBlock Text="Indisponíveis para venda" FontSize="11" Foreground="{StaticResource TextSubtle}" Margin="0,4,0,0"/>
+                                        <TextBlock Text="Já foram lançados e zeraram" FontSize="11" Foreground="{StaticResource TextSubtle}" Margin="0,4,0,0"/>
                                     </StackPanel>
                                 </Border>
                             </Grid>
@@ -1493,12 +1493,12 @@
                                 </LinearGradientBrush>
                             </Border.Background>
                             <Grid>
-                                <Border Height="3" Background="{StaticResource Success}" CornerRadius="12,12,0,0" VerticalAlignment="Top"/>
+                                <Border Height="3" Background="{StaticResource BorderSoft}" CornerRadius="12,12,0,0" VerticalAlignment="Top"/>
                                 <Border Padding="15" Margin="0,3,0,0">
                                     <StackPanel>
-                                        <TextBlock Text="TOTAL PRODUTOS EM ALERTA" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextSubtle}" Margin="0,0,0,8"/>
-                                        <TextBlock x:Name="AlertTotalCriticalCountText" Text="0 itens" FontSize="26" FontWeight="Black" Foreground="{StaticResource Success}"/>
-                                        <TextBlock Text="Soma de todos os alertas ativos" FontSize="11" Foreground="{StaticResource TextSubtle}" Margin="0,4,0,0"/>
+                                        <TextBlock Text="SEM CONTAGEM INICIAL" FontSize="10" FontWeight="Bold" Foreground="{StaticResource TextSubtle}" Margin="0,0,0,8"/>
+                                        <TextBlock x:Name="AlertTotalCriticalCountText" Text="0 itens" FontSize="26" FontWeight="Black" Foreground="{StaticResource TextSubtle}"/>
+                                        <TextBlock Text="Nunca tiveram estoque lançado" FontSize="11" Foreground="{StaticResource TextSubtle}" Margin="0,4,0,0"/>
                                     </StackPanel>
                                 </Border>
                             </Grid>

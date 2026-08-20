@@ -225,6 +225,13 @@ namespace PdvPadaria
             public string TotalString => $"R$ {TotalCents / 100.0:F2}";
         }
 
+        // Linha de "SELECT DISTINCT ProductId FROM StockMovement": marca quais produtos já
+        // passaram por algum lançamento de estoque nesta máquina.
+        private class ProdutoIdRow
+        {
+            public string ProductId { get; set; } = string.Empty;
+        }
+
         public class StockAlertView
         {
             public string Id { get; set; } = string.Empty;
@@ -240,7 +247,10 @@ namespace PdvPadaria
             public string MinStockString => UnitMeasure == "KG" ? $"{MinStock:F3} KG" : $"{MinStock:F0} UN";
             public string StockString => UnitMeasure == "KG" ? $"{LocalStockQuantity:F3} KG" : $"{LocalStockQuantity:F0} UN";
 
-            public string StatusAlerta => LocalStockQuantity <= 0 ? "CRÍTICO" : "ATENÇÃO";
+            // A lista de alertas só recebe produto que ACABOU (zerado, mas já lançado aqui
+            // alguma vez) ou que está NO MÍNIMO. Quem nunca teve contagem fica fora — ver
+            // LoadLowStockAlerts.
+            public string StatusAlerta => LocalStockQuantity <= 0 ? "ACABOU" : "NO MÍNIMO";
 
             public System.Windows.Media.Brush BadgeBackground => LocalStockQuantity <= 0 
                 ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(38, 239, 68, 68))
@@ -1159,7 +1169,7 @@ namespace PdvPadaria
 
             var variationLabel = new TextBlock
             {
-                Text = paes.Count > 1 ? "Selecione o pão (ou tecle o número):" : "Pão:",
+                Text = paes.Count > 1 ? "Selecione o pão (ou tecle F1, F2...):" : "Pão:",
                 Margin = new Thickness(0, 0, 0, 10),
                 Foreground = AppColors.TextMuted,
                 FontSize = 15,
@@ -1189,8 +1199,8 @@ namespace PdvPadaria
                 var pao = paes[i];
                 var btn = new Button
                 {
-                    // O número na frente combina com a tecla de atalho (1, 2, 3...).
-                    Content = paes.Count > 1 ? $"{i + 1}. {pao.Name}" : pao.Name,
+                    // O rótulo combina com a tecla de atalho (F1, F2, F3...).
+                    Content = paes.Count > 1 ? $"F{i + 1}. {pao.Name}" : pao.Name,
                     Padding = new Thickness(15, 12, 15, 12),
                     FontSize = 16,
                     FontWeight = FontWeights.Bold,
@@ -1275,20 +1285,21 @@ namespace PdvPadaria
                 }
             };
 
-            // Teclas 1..9 escolhem o pão sem tirar a mão do teclado. O foco fica no campo de
-            // valor, então o atalho é tratado no PreviewKeyDown da janela — mas só quando há
-            // mais de um pão, senão o operador não conseguiria digitar "1" no valor.
+            // F1..F9 escolhem o pão sem tirar a mão do teclado.
+            //
+            // Antes o atalho eram as teclas 1..9, interceptadas só com o campo de valor vazio.
+            // Mas campo vazio é exatamente o momento do PRIMEIRO dígito: quem digitava "1,00"
+            // via o "1" ser engolido pela seleção e sobrava ",00". Todo valor começando em 1 ou
+            // 2 saía errado. Tecla de função não disputa com número, então o atalho funciona a
+            // qualquer momento e o campo recebe o que foi digitado.
             if (paes.Count > 1)
             {
                 inputWindow.PreviewKeyDown += (s, ev) =>
                 {
-                    int idx = -1;
-                    if (ev.Key >= Key.D1 && ev.Key <= Key.D9) idx = ev.Key - Key.D1;
-                    else if (ev.Key >= Key.NumPad1 && ev.Key <= Key.NumPad9) idx = ev.Key - Key.NumPad1;
+                    if (ev.Key < Key.F1 || ev.Key > Key.F9) return;
 
-                    // Só intercepta se o campo de valor estiver vazio; a partir daí o número
-                    // digitado é valor, não seleção de pão.
-                    if (idx >= 0 && idx < paes.Count && string.IsNullOrEmpty(textBox.Text))
+                    int idx = ev.Key - Key.F1;
+                    if (idx >= 0 && idx < paes.Count)
                     {
                         ev.Handled = true;
                         paoSelecionado = paes[idx];
@@ -2252,10 +2263,34 @@ namespace PdvPadaria
             try
             {
                 var connection = App.Database.GetConnection();
-                var products = await connection.Table<Product>()
-                    .Where(p => p.Active && p.LocalStockQuantity <= p.MinStock)
-                    .ToListAsync();
-                
+
+                // Antes o filtro era só "LocalStockQuantity <= MinStock". Como nenhum produto
+                // tem mínimo definido (MinStock = 0), qualquer produto zerado satisfazia 0 <= 0
+                // e entrava: 111 dos 115 apareciam em alerta. Um alerta que nunca fica limpo
+                // deixa de ser lido.
+                //
+                // A maioria não tinha acabado: nunca teve estoque lançado, porque a loja ainda
+                // não fez a contagem inicial. São situações diferentes:
+                //
+                //   ACABOU          zerado e JÁ lançado aqui  -> repor, é o alerta de verdade
+                //   NO MÍNIMO       0 < qtd <= mínimo (> 0)   -> repor antes de faltar
+                //   SEM CONTAGEM    zerado e nunca lançado    -> cadastro pendente, fora da lista
+                //
+                // "Já lançado" sai do histórico de movimentos desta máquina, que agora inclui
+                // as entradas do dono (ver ApplyOwnerAdjustmentsAsync).
+                var lancadosRows = await connection.QueryAsync<ProdutoIdRow>(
+                    "SELECT DISTINCT ProductId FROM StockMovement");
+                var lancados = new HashSet<string>(lancadosRows.Select(r => r.ProductId));
+
+                var ativos = await connection.Table<Product>().Where(p => p.Active).ToListAsync();
+
+                bool Acabou(Product p) => p.LocalStockQuantity <= 0 && lancados.Contains(p.Id);
+                bool NoMinimo(Product p) => p.LocalStockQuantity > 0 && p.MinStock > 0
+                                            && p.LocalStockQuantity <= p.MinStock;
+                bool SemContagem(Product p) => p.LocalStockQuantity <= 0 && !lancados.Contains(p.Id);
+
+                var products = ativos.Where(p => Acabou(p) || NoMinimo(p)).ToList();
+
                 var categories = await connection.Table<Category>().ToListAsync();
                 var categoryMap = categories.ToDictionary(c => c.Id, c => c.Name);
 
@@ -2274,14 +2309,17 @@ namespace PdvPadaria
                     .OrderBy(p => p.Name)
                     .ToList();
 
-                // Atualiza contadores
-                int criticalCount = alerts.Count(a => a.LocalStockQuantity <= 0);
-                int lowCount = alerts.Count(a => a.LocalStockQuantity > 0);
-                int totalCount = alerts.Count;
+                // Contadores. "Sem contagem" não é alerta: mostra o tamanho da contagem
+                // inicial que ainda falta, sem competir com o que pede reposição.
+                int acabouCount      = ativos.Count(Acabou);
+                int noMinimoCount    = ativos.Count(NoMinimo);
+                int semContagemCount = ativos.Count(SemContagem);
 
-                AlertZeroStockCountText.Text = criticalCount == 1 ? "1 item" : $"{criticalCount} itens";
-                AlertLowStockCountText.Text = lowCount == 1 ? "1 item" : $"{lowCount} itens";
-                AlertTotalCriticalCountText.Text = totalCount == 1 ? "1 item" : $"{totalCount} itens";
+                string Itens(int n) => n == 1 ? "1 item" : $"{n} itens";
+
+                AlertZeroStockCountText.Text     = Itens(acabouCount);
+                AlertLowStockCountText.Text      = Itens(noMinimoCount);
+                AlertTotalCriticalCountText.Text = Itens(semContagemCount);
 
                 StockAlertsList.ItemsSource = alerts;
             }
