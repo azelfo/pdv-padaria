@@ -1,5 +1,5 @@
 {
-  "version": "1.1.7",
+  "version": "1.1.6",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
   "notes": "Corrige os acessos das lojas sem apagar historico. Tokens vencidos se renovam sozinhos no login online, inclusive quando o DONO entra na maquina, e o STORE_ID antigo deixa de gerar aviso falso. A troca de loja preserva vendas e historico e so termina depois de carregar os dados da loja correta. Nao e preciso desinstalar, limpar o computador nem editar arquivos."
 }
