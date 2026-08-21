@@ -80,9 +80,10 @@ namespace PdvPadaria.Services
             if (string.IsNullOrEmpty(codigo)) return null;
 
             if (codigo == "invalid_token")
-                return "O TOKEN DE SINCRONIZACAO desta maquina nao vale mais. " +
+                return "A credencial de sincronizacao desta maquina nao vale mais. " +
                        "Enquanto isso, NENHUMA venda e NENHUM estoque deste caixa sobe para a nuvem. " +
-                       "Corrija a linha STORE_SYNC_TOKEN no arquivo .env desta maquina.";
+                       "Para resolver: com a internet funcionando, saia e entre de novo com o " +
+                       "usuario desta loja - o caixa pega uma credencial nova sozinho.";
 
             return $"A nuvem recusou o envio: {codigo}";
         }
@@ -196,10 +197,11 @@ namespace PdvPadaria.Services
             try
             {
                 // Token da loja: o servidor carimba storeId/tenantId a partir dele (ignora o payload).
-                string storeToken = EnvService.Get("STORE_SYNC_TOKEN");
+                string storeToken = StoreIdentityService.TokenAtual();
                 if (string.IsNullOrEmpty(storeToken))
                 {
-                    LastError = "STORE_SYNC_TOKEN ausente no .env desta máquina.";
+                    LastError = "Esta maquina ainda nao tem credencial de sincronizacao. " +
+                                "Entre com o usuario desta loja estando conectado a internet.";
                     return false;
                 }
 
@@ -285,10 +287,12 @@ namespace PdvPadaria.Services
             // dele, ignorando qualquer storeId do payload). Sem token o estoque desta loja NUNCA
             // chega ao painel do dono, entao isto e uma falha e precisa aparecer na tela — antes
             // devolvia "true" e o caixa exibia "Sincronizado" em verde com o estoque parado.
-            string storeToken = EnvService.Get("STORE_SYNC_TOKEN");
+            string storeToken = StoreIdentityService.TokenAtual();
             if (string.IsNullOrEmpty(storeToken))
             {
-                LastError = "STORE_SYNC_TOKEN ausente no .env desta maquina: o estoque desta loja nao sobe para o painel.";
+                LastError = "Esta maquina ainda nao tem credencial de sincronizacao: o estoque " +
+                            "desta loja nao sobe para o painel. Entre com o usuario desta loja " +
+                            "estando conectado a internet.";
                 return false;
             }
 

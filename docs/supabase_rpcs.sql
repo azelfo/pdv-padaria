@@ -871,3 +871,48 @@ $$;
 -- poder conferir isso sozinho na abertura (SyncService.ConferirIdentidadeDaLojaAsync).
 -- Nao remova esse GRANT.
 -- ============================================================
+
+-- ============================================================
+-- AUTO-CONFIGURACAO DO CAIXA PELO LOGIN  (caixa_token / registrar_caixa)
+--
+-- Migracao: caixa_token_auto_registro_no_login (21/08/2026)
+--
+-- O PROBLEMA QUE ISTO RESOLVE
+-- Dizer a uma maquina de que loja ela era exigia colar um segredo no .env, a
+-- mao, em cada PC. Quando o token de duas lojas foi rotacionado, a troca nunca
+-- chegou nas maquinas: Japao e Producao ficaram de 17/08 a 21/08 sem mandar
+-- venda nem estoque. Nenhum passo automatico dependia de um humano ir ate la.
+--
+-- COMO FUNCIONA AGORA
+-- O usuario do caixa (centro@, japao@, producao@) ja tem "storeId" no cadastro.
+-- No primeiro login ONLINE o PDV chama registrar_caixa, que valida a senha e
+-- emite um token so daquela maquina. O PDV guarda em %AppData%/pdv-padaria/
+-- caixa-token.dat e usa dali em diante -- para gravar E para saber que estoque
+-- mostrar. Ninguem digita segredo em lugar nenhum.
+--
+-- FORMATO DO TOKEN: "<uuid>.<segredo>"
+-- O uuid na frente e a chave primaria da linha, entao loja_do_token acha a
+-- linha pelo indice e roda bcrypt UMA vez. Sem ele seria bcrypt contra a tabela
+-- inteira a cada sincronizacao (2x por minuto, por caixa).
+--
+-- loja_do_token aceita os dois formatos: com ponto vai em caixa_token, sem
+-- ponto vai em store_sync_secret (as maquinas antigas continuam valendo).
+--
+-- SEGURANCA
+--   - caixa_token tem RLS ligado e NENHUMA politica: anon nunca le os hashes.
+--     Quem consulta e loja_do_token, SECURITY DEFINER.
+--   - o segredo em texto so existe no retorno de registrar_caixa. No banco,
+--     so o hash bcrypt.
+--   - quem tem email+senha de um caixa consegue emitir token daquela loja.
+--     E o mesmo poder que essa pessoa ja tem sentada no caixa (lancar venda
+--     naquela loja), entao o alcance nao aumentou -- e agora cada maquina tem
+--     o seu, entao da para revogar UMA sem parar a loja.
+--
+-- REVOGAR UMA MAQUINA:
+--   update caixa_token set "revokedAt" = now() where id = '<id do token>';
+--
+-- VER AS MAQUINAS REGISTRADAS:
+--   select c.id, s.name, c.terminal, c."createdAt", c."revokedAt"
+--     from caixa_token c join "Store" s on s.id = c."storeId"
+--    order by s.name, c."createdAt";
+-- ============================================================

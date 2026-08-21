@@ -303,16 +303,17 @@ namespace PdvPadaria
                     SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Red;
 
                     string motivo = StoreIdentityService.TokenAusente
-                        ? "Falta a linha STORE_SYNC_TOKEN no arquivo .env desta maquina."
-                        : "O TOKEN DE SINCRONIZACAO desta maquina nao vale mais.";
+                        ? "Esta maquina ainda nao esta ligada a nenhuma loja."
+                        : "A credencial de sincronizacao desta maquina nao vale mais.";
 
                     MessageBox.Show(
                         motivo + "\n\n" +
                         "Enquanto isso, NENHUMA venda e NENHUM estoque deste caixa sobe para a nuvem." +
                         "\n\nO caixa continua vendendo normalmente e nada se perde: as vendas ficam " +
-                        "guardadas aqui e sobem sozinhas assim que o token for corrigido." +
-                        "\n\nPeca o token desta loja ao responsavel e corrija a linha " +
-                        "STORE_SYNC_TOKEN do arquivo .env.",
+                        "guardadas aqui e sobem sozinhas assim que a ligacao for refeita." +
+                        "\n\nCOMO RESOLVER: confira se a internet esta funcionando, feche o programa, " +
+                        "abra de novo e entre com o usuario DESTA loja. O caixa se liga a loja " +
+                        "sozinho no login - nao precisa mexer em nenhum arquivo.",
                         "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }

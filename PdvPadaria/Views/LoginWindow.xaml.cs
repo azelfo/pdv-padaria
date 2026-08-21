@@ -155,6 +155,20 @@ namespace PdvPadaria.Views
                 // 3. Sucesso no login: Se logou online, puxa produtos e estoques em background
                 if (isOnlineSuccess && user != null)
                 {
+                    // O login é o momento em que a máquina descobre de que loja ela é: o
+                    // usuário do caixa já traz o storeId do cadastro. Se ela ainda não tem
+                    // credencial de sincronização — ou tem uma que venceu, ou que responde
+                    // por outra loja — ela pede a sua agora e guarda. É isto que dispensa
+                    // alguém ir de PC em PC colar token em arquivo, que foi como duas lojas
+                    // acabaram dias sem sincronizar.
+                    await StoreIdentityService.ResolverAsync(user.StoreId ?? string.Empty);
+
+                    if (StoreIdentityService.PrecisaRegistrar(user.StoreId ?? string.Empty))
+                    {
+                        bool registrou = await StoreIdentityService.RegistrarPeloLoginAsync(email, password);
+                        System.Diagnostics.Debug.WriteLine($"[Registro do caixa]: {(registrou ? "ok" : "falhou")}");
+                    }
+
                     string tenantId = EnvService.Get("TENANT_ID", user.TenantId);
                     string storeId = StoreIdentityService.Atual(user.StoreId ?? "store-test");
 
