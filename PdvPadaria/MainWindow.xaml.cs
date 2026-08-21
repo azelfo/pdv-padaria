@@ -4305,12 +4305,14 @@ namespace PdvPadaria
                 string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
 
                 bool pushSuccess = await syncService.PushSalesAsync(tenantId, storeId);
-                // So troca a base local depois do ACK. Se a resposta do push se perdeu,
-                // mantemos a fila; o retry pelo mesmo StockMovement.id e idempotente.
                 bool pullSuccess = pushSuccess
                     && await syncService.PullUpdatesAsync(tenantId, storeId);
+                bool stockSuccess = pullSuccess
+                    && await syncService.PushStockSnapshotAsync(tenantId, storeId);
 
-                var pendingCount = await App.Database.GetConnection().Table<Sale>().Where(s => !s.IsSynced).CountAsync();
+                var pendingCount = await App.Database.GetConnection().Table<Sale>()
+                    .Where(s => !s.IsSynced && s.StoreId == storeId)
+                    .CountAsync();
 
                 Dispatcher.Invoke(() => {
                     if (pendingCount > 0)
@@ -4318,7 +4320,7 @@ namespace PdvPadaria
                         SyncStatusText.Text = $"{pendingCount} venda(s) pendente(s)";
                         SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Yellow;
                     }
-                    else if (pushSuccess && pullSuccess)
+                    else if (pushSuccess && pullSuccess && stockSuccess)
                     {
                         SyncStatusText.Text = "Sincronizado";
                         SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Green;
@@ -4330,7 +4332,7 @@ namespace PdvPadaria
                     }
                 });
 
-                if (!pushSuccess || !pullSuccess)
+                if (!pushSuccess || !pullSuccess || !stockSuccess)
                 {
                     return (false, syncService.LastError);
                 }

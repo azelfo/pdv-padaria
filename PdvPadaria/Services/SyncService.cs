@@ -79,8 +79,6 @@ namespace PdvPadaria.Services
                 return "A nuvem devolveu uma resposta invalida. As operacoes continuam na fila local.";
 
             string codigo = obj["error"]?.ToString() ?? string.Empty;
-            if (string.IsNullOrEmpty(codigo)) return null;
-
             if (codigo == "invalid_token")
             {
                 StoreIdentityService.MarcarTokenInvalido();
@@ -90,7 +88,18 @@ namespace PdvPadaria.Services
                        "O caixa renova a credencial sozinho.";
             }
 
-            return $"A nuvem recusou o envio: {codigo}";
+            if (!string.IsNullOrEmpty(codigo))
+                return $"A nuvem recusou o envio: {codigo}";
+
+            foreach (string campo in camposEsperados)
+            {
+                var valor = obj[campo];
+                if (valor == null || (valor.Type != Newtonsoft.Json.Linq.JTokenType.Integer
+                                      && valor.Type != Newtonsoft.Json.Linq.JTokenType.Float))
+                    return "A nuvem devolveu uma resposta incompleta. As operacoes continuam na fila local.";
+            }
+
+            return null;
         }
 
         #endregion
@@ -112,7 +121,7 @@ namespace PdvPadaria.Services
             {
                 // 1. Busca vendas locais que não foram sincronizadas
                 var pendingSales = _dbConnection.Table<Sale>()
-                    .Where(s => !s.IsSynced)
+                    .Where(s => !s.IsSynced && s.StoreId == storeId)
                     .ToList();
 
                 // 2. Coleta itens e movimentos relacionados
@@ -143,7 +152,8 @@ namespace PdvPadaria.Services
                 //     SQL cru de propósito: o LINQ do sqlite-net traduz "== null" de forma
                 //     frágil, e aqui um erro silencioso significaria histórico perdido.
                 var avulsos = _dbConnection.Query<StockMovement>(
-                    "SELECT * FROM StockMovement WHERE IsSynced = 0 AND (SaleId IS NULL OR SaleId = '')");
+                    "SELECT * FROM StockMovement WHERE IsSynced = 0 AND StoreId = ? " +
+                    "AND (SaleId IS NULL OR SaleId = '')", storeId);
                 movementsToSend.AddRange(avulsos);
 
                 // Nada pendente dos dois lados: encerra sem chamar a rede.
@@ -241,7 +251,7 @@ namespace PdvPadaria.Services
                     // (ex.: {"error":"invalid_token"}). Confiar so no status HTTP fazia o
                     // PDV marcar as vendas como sincronizadas e nunca mais tentar de novo:
                     // a venda sumia de vez. O erro tem que vir do CORPO da resposta.
-                    string? erroRpc = ErroDaResposta(corpo);
+                    string? erroRpc = ErroDaResposta(corpo, "sales", "items", "movements");
                     if (erroRpc != null)
                     {
                         LastError = erroRpc;
@@ -249,24 +259,6 @@ namespace PdvPadaria.Services
                         return false;
                     }
 
-                    try
-                    {
-                        var tokenResposta = JsonConvert.DeserializeObject<Newtonsoft.Json.Linq.JToken>(corpo);
-                        if (tokenResposta is Newtonsoft.Json.Linq.JArray array)
-                            tokenResposta = array.First;
-                        var objetoResposta = tokenResposta as Newtonsoft.Json.Linq.JObject;
-                        if (objetoResposta?["mode"]?.ToString() != "ledger")
-                        {
-                            LastError = "A atualizacao segura do servidor ainda nao esta ativa. " +
-                                        "As operacoes continuam na fila local para nova tentativa.";
-                            return false;
-                        }
-                    }
-                    catch
-                    {
-                        LastError = "A nuvem nao confirmou o envio. As operacoes continuam na fila local.";
-                        return false;
-                    }
                     return true;
                 }
             }
@@ -274,6 +266,92 @@ namespace PdvPadaria.Services
             {
                 LastError = ex.Message;
                 System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_vendas Error]: {ex.Message}");
+                return false;
+            }
+        }
+
+        #endregion
+
+        #region Push de estoque (protocolo legado)
+
+        /// <summary>
+        /// Publica a foto absoluta do estoque local na RPC legada push_estoque.
+        /// A loja e derivada do token no servidor; o storeId serve apenas para impedir
+        /// que uma maquina ainda sem identidade publique uma foto sem destino conhecido.
+        /// </summary>
+        public async Task<bool> PushStockSnapshotAsync(string tenantId, string storeId)
+        {
+            if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
+            {
+                LastError = "Credenciais do Supabase ausentes.";
+                return false;
+            }
+            if (string.IsNullOrWhiteSpace(storeId))
+            {
+                LastError = "Esta maquina ainda nao esta ligada a uma loja.";
+                return false;
+            }
+
+            string storeToken = StoreIdentityService.TokenAtual();
+            if (string.IsNullOrWhiteSpace(storeToken))
+            {
+                LastError = "Esta maquina ainda nao tem credencial de sincronizacao. " +
+                            "Entre com o usuario desta loja estando conectado a internet.";
+                return false;
+            }
+
+            try
+            {
+                var products = _dbConnection.Table<Product>()
+                    .Where(p => p.TenantId == tenantId)
+                    .ToList();
+                if (products.Count == 0) return true;
+
+                var snapshot = products.Select(p => new
+                {
+                    ProductId = p.Id,
+                    Quantity = p.LocalStockQuantity
+                }).ToList();
+
+                var settings = new JsonSerializerSettings
+                {
+                    ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver()
+                };
+                var body = new { p_payload = new { stock = snapshot }, p_token = storeToken };
+                var content = new StringContent(
+                    JsonConvert.SerializeObject(body, settings), Encoding.UTF8, "application/json");
+
+                var url = $"{_supabaseUrl.TrimEnd('/')}/rest/v1/rpc/push_estoque";
+                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    request.Content = content;
+                    request.Headers.Add("apikey", _supabaseAnonKey);
+                    request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
+
+                    var response = await _httpClient.SendAsync(request);
+                    string corpo = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        LastError = $"Erro HTTP {response.StatusCode} no push_estoque: {corpo}";
+                        System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_estoque Error]: {LastError}");
+                        return false;
+                    }
+
+                    string? erroRpc = ErroDaResposta(corpo, "stock");
+                    if (erroRpc != null)
+                    {
+                        LastError = erroRpc;
+                        System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_estoque recusado]: {corpo}");
+                        return false;
+                    }
+
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                System.Diagnostics.Debug.WriteLine($"[Push Estoque Error]: {ex.Message}");
                 return false;
             }
         }
@@ -332,12 +410,12 @@ namespace PdvPadaria.Services
         #region Métodos de Pull (Recebimento de cadastros e estoques da nuvem)
 
         /// <summary>
-        /// Atualiza cadastros e reconstroi o saldo local a partir da projecao autoritativa
-        /// da nuvem mais os movimentos desta maquina que ainda nao receberam ACK.
-        /// O servidor aplica cada StockMovement.id uma unica vez; nao existe mais foto
-        /// absoluta enviada por um PC capaz de sobrescrever o saldo dos outros.
+        /// Atualiza os cadastros sem reescrever o saldo local durante o ciclo normal.
+        /// A foto da nuvem so vira saldo quando a maquina e vinculada pela primeira vez
+        /// ou troca de loja explicitamente.
         /// </summary>
-        public async Task<bool> PullUpdatesAsync(string tenantId, string storeId)
+        public async Task<bool> PullUpdatesAsync(
+            string tenantId, string storeId, bool semearEstoqueDaNuvem = false)
         {
             if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
             {
@@ -373,15 +451,15 @@ namespace PdvPadaria.Services
                     .GroupBy(sp => sp.ProductId)
                     .ToDictionary(g => g.Key, g => g.First());
 
-                // A mesma transacao que le a fila tambem troca a base do estoque. Uma venda
-                // concorrente fica inteira antes ou depois dela, nunca perdida no meio.
                 _dbConnection.RunInTransaction(() =>
                 {
-                    var deltasPendentes = _dbConnection.Query<StockMovement>(
-                            "SELECT * FROM StockMovement WHERE IsSynced = 0 AND StoreId = ?",
-                            storeId)
-                        .GroupBy(m => m.ProductId)
-                        .ToDictionary(g => g.Key, g => g.Sum(DeltaDoMovimento));
+                    var deltasPendentes = semearEstoqueDaNuvem
+                        ? _dbConnection.Query<StockMovement>(
+                                "SELECT * FROM StockMovement WHERE IsSynced = 0 AND StoreId = ?",
+                                storeId)
+                            .GroupBy(m => m.ProductId)
+                            .ToDictionary(g => g.Key, g => g.Sum(DeltaDoMovimento))
+                        : new Dictionary<string, double>();
 
                     if (categories != null)
                     {
@@ -395,19 +473,25 @@ namespace PdvPadaria.Services
                             ? saldo.Quantity
                             : 0;
                         double minimo = saldo?.MinStock ?? 0;
-                        if (deltasPendentes.TryGetValue(prod.Id, out var pendente))
-                            quantidade += pendente;
+                        if (deltasPendentes.TryGetValue(prod.Id, out var deltaPendente))
+                            quantidade += deltaPendente;
 
                         var existing = _dbConnection.Find<Product>(prod.Id);
                         if (existing != null)
                         {
                             _dbConnection.Execute(
                                 "UPDATE Product SET Name=?, Barcode=?, PriceSale=?, PriceCost=?, Type=?, " +
-                                "UnitMeasure=?, Active=?, ImageUrl=?, CategoryId=?, TenantId=?, UpdatedAt=?, " +
-                                "LocalStockQuantity=?, MinStock=? WHERE Id=?",
+                                "UnitMeasure=?, Active=?, ImageUrl=?, CategoryId=?, TenantId=?, UpdatedAt=? WHERE Id=?",
                                 prod.Name, prod.Barcode, prod.PriceSale, prod.PriceCost, prod.Type,
                                 prod.UnitMeasure, prod.Active, prod.ImageUrl, prod.CategoryId, prod.TenantId,
-                                DateTime.Now, quantidade, minimo, prod.Id);
+                                DateTime.Now, prod.Id);
+
+                            if (semearEstoqueDaNuvem)
+                            {
+                                _dbConnection.Execute(
+                                    "UPDATE Product SET LocalStockQuantity=?, MinStock=? WHERE Id=?",
+                                    quantidade, minimo, prod.Id);
+                            }
                         }
                         else if (prod.Active)
                         {
@@ -426,12 +510,103 @@ namespace PdvPadaria.Services
                     }
                 });
 
+                if (!await ApplyOwnerAdjustmentsAsync(
+                        tenantId, storeId,
+                        snapshotDaSemeadura: semearEstoqueDaNuvem ? stockMap : null))
+                    return false;
                 return true;
             }
             catch (Exception ex)
             {
                 LastError = ex.Message;
                 System.Diagnostics.Debug.WriteLine($"[Pull Error]: {ex.Message}");
+                return false;
+            }
+        }
+
+        private async Task<bool> ApplyOwnerAdjustmentsAsync(
+            string tenantId, string storeId,
+            IReadOnlyDictionary<string, StoreProductDto>? snapshotDaSemeadura)
+        {
+            try
+            {
+                var ajustes = await GetFromSupabaseAsync<OwnerStockAdjustmentDto>(
+                    $"OwnerStockAdjustment?storeId=eq.{Uri.EscapeDataString(storeId)}&order=createdAt.asc");
+                if (ajustes == null)
+                {
+                    LastError = "Falha ao carregar os ajustes de estoque da loja.";
+                    return false;
+                }
+                if (ajustes.Count == 0) return true;
+
+                _dbConnection.RunInTransaction(() =>
+                {
+                    foreach (var aj in ajustes)
+                    {
+                        if (string.IsNullOrEmpty(aj.Id)
+                            || _dbConnection.Find<AppliedOwnerAdjustment>(aj.Id) != null)
+                            continue;
+
+                        bool incorporadoNoSnapshot = snapshotDaSemeadura != null
+                            && snapshotDaSemeadura.TryGetValue(aj.ProductId, out var snapshot)
+                            && snapshot.UpdatedAt >= aj.CreatedAt;
+
+                        var prod = _dbConnection.Find<Product>(aj.ProductId);
+                        // Ajuste posterior a foto baixada ainda precisa ser aplicado; ajuste
+                        // anterior ja esta incorporado e e apenas marcado como visto.
+                        if (!incorporadoNoSnapshot && prod != null)
+                        {
+                            double vendidoDepois = _dbConnection.ExecuteScalar<double>(
+                                @"SELECT COALESCE(SUM(si.Quantity), 0)
+                                    FROM SaleItem si
+                                    JOIN Sale s ON s.Id = si.SaleId
+                                   WHERE si.ProductId = ?
+                                     AND s.StoreId = ?
+                                     AND s.PaymentStatus = 'APROVADO'
+                                     AND s.SaleDate > ?",
+                                aj.ProductId, storeId, aj.CreatedAt);
+
+                            double saldoAnterior = prod.LocalStockQuantity;
+                            double saldoFinal = Math.Max(0, aj.Quantity - vendidoDepois);
+                            if (aj.MinStock.HasValue)
+                                _dbConnection.Execute(
+                                    "UPDATE Product SET LocalStockQuantity=?, MinStock=? WHERE Id=?",
+                                    saldoFinal, aj.MinStock.Value, aj.ProductId);
+                            else
+                                _dbConnection.Execute(
+                                    "UPDATE Product SET LocalStockQuantity=? WHERE Id=?",
+                                    saldoFinal, aj.ProductId);
+
+                            if (Math.Abs(saldoFinal - saldoAnterior) > 0.0001)
+                            {
+                                _dbConnection.Insert(new StockMovement
+                                {
+                                    Id = Guid.NewGuid().ToString(),
+                                    ProductId = aj.ProductId,
+                                    StoreId = storeId,
+                                    UserId = aj.CreatedBy ?? string.Empty,
+                                    TenantId = tenantId,
+                                    Type = saldoFinal >= saldoAnterior ? "ENTRADA" : "SAIDA",
+                                    Quantity = Math.Abs(saldoFinal - saldoAnterior),
+                                    Reason = "AJUSTE_DONO",
+                                    CreatedAt = aj.CreatedAt,
+                                    IsSynced = true,
+                                    SyncedAt = DateTime.Now,
+                                    BalanceBefore = saldoAnterior,
+                                    BalanceAfter = saldoFinal
+                                });
+                            }
+                        }
+
+                        _dbConnection.Insert(new AppliedOwnerAdjustment { Id = aj.Id });
+                    }
+                });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                System.Diagnostics.Debug.WriteLine($"[ApplyOwnerAdjustments Error]: {ex.Message}");
                 return false;
             }
         }
@@ -496,6 +671,17 @@ namespace PdvPadaria.Services
         public string StoreId { get; set; } = string.Empty;
         public double Quantity { get; set; }
         public double MinStock { get; set; }
+        public DateTime UpdatedAt { get; set; }
+    }
+
+    public class OwnerStockAdjustmentDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string ProductId { get; set; } = string.Empty;
+        public double Quantity { get; set; }
+        public double? MinStock { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public string? CreatedBy { get; set; }
     }
 
     #endregion

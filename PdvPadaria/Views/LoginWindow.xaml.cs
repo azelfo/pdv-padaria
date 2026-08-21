@@ -279,12 +279,20 @@ namespace PdvPadaria.Views
                         try
                         {
                             using var troca = new SyncService(App.Database.GetSyncConnection());
-                            // O ledger exige ACK antes do rebase: se a resposta do envio se
-                            // perder, a fila continua local e o mesmo id pode ser repetido.
-                            bool enviou = await troca.PushSalesAsync(tenantId, storeId);
-                            bool carregou = enviou
-                                && await troca.PullUpdatesAsync(tenantId, storeId);
-                            if (!carregou || !StoreIdentityService.ConfirmarEstoqueDaLoja(storeId))
+                            // Reconstroi a loja da nuvem + deltas locais ainda pendentes,
+                            // envia a fila e publica a foto resultante.
+                            bool carregou = await troca.PullUpdatesAsync(
+                                tenantId, storeId, semearEstoqueDaNuvem: true);
+                            // A partir daqui o SQLite ja pertence com seguranca a loja alvo.
+                            // Persistir isso antes do ACK evita perder o delta se a venda subir
+                            // e a foto falhar: o proximo login preserva o saldo local e repete.
+                            bool confirmou = carregou
+                                && StoreIdentityService.ConfirmarEstoqueDaLoja(storeId);
+                            bool enviou = confirmou
+                                && await troca.PushSalesAsync(tenantId, storeId);
+                            bool publicou = enviou
+                                && await troca.PushStockSnapshotAsync(tenantId, storeId);
+                            if (!publicou)
                             {
                                 ShowError("A loja foi identificada, mas o estoque não terminou de carregar. Tente entrar novamente com a internet funcionando; nenhum histórico foi apagado.");
                                 return;

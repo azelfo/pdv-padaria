@@ -103,7 +103,9 @@ namespace PdvPadaria.Services
         /// <summary>Última loja confirmada pelo token, sem confiar no STORE_ID legado.</summary>
         public static string LojaDoTokenConhecida()
         {
-            if (!string.IsNullOrWhiteSpace(_storeId)) return _storeId;
+            // _storeId também pode conter o fallback do STORE_ID quando o token está
+            // ausente/inválido. DONO não pode usar esse palpite para religar a máquina.
+            // Este arquivo só é gravado por token validado ou registro confirmado.
             return LerArquivo(CaminhoLoja);
         }
 

@@ -940,7 +940,8 @@ ALTER TABLE public.store_sync_secret
 REVOKE ALL ON TABLE public.store_sync_secret FROM PUBLIC, anon, authenticated;
 
 -- Rotacionar o token legado sem preencher token_hash_prev derrubou todas as
--- maquinas antigas de uma vez. O trigger torna a preservacao automatica.
+-- maquinas antigas de uma vez. O trigger preserva uma janela curta de transicao;
+-- loja_do_token deixa o segredo anterior expirar depois de sete dias.
 CREATE OR REPLACE FUNCTION public.preservar_token_anterior()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1002,6 +1003,7 @@ BEGIN
     FROM public.store_sync_secret s
    WHERE s.token_hash = extensions.crypt(p_token, s.token_hash)
       OR (s.token_hash_prev IS NOT NULL
+          AND s."updatedAt" > now() - interval '7 days'
           AND s.token_hash_prev = extensions.crypt(p_token, s.token_hash_prev))
    LIMIT 1;
 
