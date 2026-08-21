@@ -60,23 +60,25 @@ namespace PdvPadaria.Services
         /// HTTP, uma recusa passava por sucesso — as vendas eram marcadas como enviadas e
         /// apagadas da fila, e o estoque nunca chegava ao painel.
         /// </summary>
-        private static string? ErroDaResposta(string corpo)
+        private static string? ErroDaResposta(string corpo, params string[] camposEsperados)
         {
-            if (string.IsNullOrWhiteSpace(corpo)) return null;
+            if (string.IsNullOrWhiteSpace(corpo))
+                return "A nuvem nao confirmou o envio. As operacoes continuam na fila local.";
 
-            string codigo;
+            Newtonsoft.Json.Linq.JObject? obj;
             try
             {
-                var obj = JsonConvert.DeserializeObject<Newtonsoft.Json.Linq.JToken>(corpo);
-                // A RPC pode voltar como objeto ou dentro de um array de uma posição.
-                if (obj is Newtonsoft.Json.Linq.JArray arr) obj = arr.First;
-                codigo = (obj as Newtonsoft.Json.Linq.JObject)?["error"]?.ToString() ?? string.Empty;
+                obj = JsonConvert.DeserializeObject<Newtonsoft.Json.Linq.JObject>(corpo);
             }
             catch
             {
-                return null; // corpo não-JSON: deixa passar, o status HTTP já cuidou disso
+                return "A nuvem devolveu uma resposta invalida. As operacoes continuam na fila local.";
             }
 
+            if (obj == null)
+                return "A nuvem devolveu uma resposta invalida. As operacoes continuam na fila local.";
+
+            string codigo = obj["error"]?.ToString() ?? string.Empty;
             if (string.IsNullOrEmpty(codigo)) return null;
 
             if (codigo == "invalid_token")
