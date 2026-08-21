@@ -155,6 +155,19 @@ namespace PdvPadaria.Services
         }
 
         /// <summary>
+        /// É uma TROCA de loja (a máquina já respondia por outra), e não uma máquina nova?
+        /// Só neste caso o banco local precisa ser limpo antes: ele guarda o estoque, e o
+        /// estoque da loja anterior não pode ser publicado como se fosse o da nova.
+        /// </summary>
+        public static bool EhTrocaDeLoja(string storeIdDoUsuario)
+        {
+            if (string.IsNullOrWhiteSpace(storeIdDoUsuario)) return false;
+            if (string.IsNullOrWhiteSpace(_storeId)) return false;
+
+            return !string.Equals(_storeId, storeIdDoUsuario, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// Pede à nuvem um token próprio desta máquina, usando as credenciais que o
         /// operador acabou de digitar. A senha não é guardada em lugar nenhum: ela só
         /// atravessa esta chamada. O token volta UMA vez e fica salvo em %AppData%.

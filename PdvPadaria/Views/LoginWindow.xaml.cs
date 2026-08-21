@@ -161,29 +161,74 @@ namespace PdvPadaria.Views
                     // por outra loja — ela pede a sua agora e guarda. É isto que dispensa
                     // alguém ir de PC em PC colar token em arquivo, que foi como duas lojas
                     // acabaram dias sem sincronizar.
-                    await StoreIdentityService.ResolverAsync(user.StoreId ?? string.Empty);
+                    string lojaDoUsuario = user.StoreId ?? string.Empty;
+                    await StoreIdentityService.ResolverAsync(lojaDoUsuario);
 
-                    if (StoreIdentityService.PrecisaRegistrar(user.StoreId ?? string.Empty))
+                    // Trocar de loja mexe no banco local (ele guarda o ESTOQUE), então o
+                    // saldo precisa ser semeado a partir da loja nova. Máquina nova, que
+                    // nunca respondeu por loja nenhuma, não tem nada a limpar.
+                    bool semearEstoque = false;
+
+                    if (StoreIdentityService.PrecisaRegistrar(lojaDoUsuario))
                     {
-                        bool registrou = await StoreIdentityService.RegistrarPeloLoginAsync(email, password);
-                        System.Diagnostics.Debug.WriteLine($"[Registro do caixa]: {(registrou ? "ok" : "falhou")}");
+                        bool podeSeguir = true;
+
+                        if (StoreIdentityService.EhTrocaDeLoja(lojaDoUsuario))
+                        {
+                            using var prep = new SyncService(App.Database.GetSyncConnection());
+                            var (ok, motivo) = prep.PrepararTrocaDeLoja();
+                            podeSeguir = ok;
+                            semearEstoque = ok;
+
+                            if (!ok)
+                            {
+                                // Continua o login na loja ATUAL: barrar o operador seria pior
+                                // que adiar a troca, e as vendas pendentes precisam subir.
+                                MessageBox.Show(motivo, "Troca de loja adiada",
+                                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                            }
+                        }
+
+                        if (podeSeguir)
+                        {
+                            bool registrou = await StoreIdentityService.RegistrarPeloLoginAsync(email, password);
+                            System.Diagnostics.Debug.WriteLine($"[Registro do caixa]: {(registrou ? "ok" : "falhou")}");
+                            if (!registrou) semearEstoque = false;
+                        }
                     }
 
                     string tenantId = EnvService.Get("TENANT_ID", user.TenantId);
                     string storeId = StoreIdentityService.Atual(user.StoreId ?? "store-test");
 
-                    _ = Task.Run(async () =>
+                    if (semearEstoque)
                     {
+                        // Awaited de propósito: o caixa não pode abrir mostrando o estoque da
+                        // loja anterior enquanto o da nova ainda está a caminho.
                         try
                         {
-                            using var syncService = new SyncService(App.Database.GetSyncConnection());
-                            await syncService.PullUpdatesAsync(tenantId, storeId);
+                            using var troca = new SyncService(App.Database.GetSyncConnection());
+                            await troca.PullUpdatesAsync(tenantId, storeId, semearEstoqueDaNuvem: true);
                         }
                         catch (Exception ex)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[Sync Initial Pull Error]: {ex.Message}");
+                            System.Diagnostics.Debug.WriteLine($"[Pull da troca de loja]: {ex.Message}");
                         }
-                    });
+                    }
+                    else
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                using var syncService = new SyncService(App.Database.GetSyncConnection());
+                                await syncService.PullUpdatesAsync(tenantId, storeId);
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[Sync Initial Pull Error]: {ex.Message}");
+                            }
+                        });
+                    }
                 }
 
                 // Sucesso completo: Abre a janela principal do PDV

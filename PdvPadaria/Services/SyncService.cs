@@ -355,12 +355,73 @@ namespace PdvPadaria.Services
 
         #endregion
 
+        #region Troca de loja desta máquina
+
+        /// <summary>
+        /// Limpa o que era do caixa ANTERIOR antes desta máquina virar caixa de outra loja.
+        ///
+        /// A credencial troca no login, mas o banco local não trocava junto — e ele guarda o
+        /// ESTOQUE. Sem esta limpeza, a primeira sincronização depois da troca publicaria o
+        /// saldo da loja antiga como se fosse o da loja nova, apagando o número certo. Foi
+        /// assim que, num teste, o estoque de uma loja apareceu carimbado em outra.
+        ///
+        /// Recusa a troca enquanto houver venda ou movimento não enviado: essas linhas são da
+        /// loja anterior e só sobem com a credencial anterior. Perder venda para trocar de
+        /// loja seria um preço absurdo — melhor mandar sincronizar primeiro.
+        ///
+        /// O histórico apagado aqui NÃO se perde: ele já subiu, e continua no painel do dono.
+        /// </summary>
+        public (bool Ok, string Motivo) PrepararTrocaDeLoja()
+        {
+            try
+            {
+                int vendasPendentes = _dbConnection.ExecuteScalar<int>(
+                    "SELECT COUNT(*) FROM Sale WHERE IsSynced = 0");
+                int movimentosPendentes = _dbConnection.ExecuteScalar<int>(
+                    "SELECT COUNT(*) FROM StockMovement WHERE IsSynced = 0");
+
+                if (vendasPendentes > 0 || movimentosPendentes > 0)
+                {
+                    return (false,
+                        $"Esta maquina ainda tem {vendasPendentes} venda(s) e {movimentosPendentes} " +
+                        "movimento(s) de estoque da loja anterior esperando para subir. " +
+                        "Conecte a internet e espere a sincronizacao terminar antes de usar " +
+                        "esta maquina em outra loja.");
+                }
+
+                _dbConnection.RunInTransaction(() =>
+                {
+                    _dbConnection.Execute("DELETE FROM SaleItem");
+                    _dbConnection.Execute("DELETE FROM StockMovement");
+                    _dbConnection.Execute("DELETE FROM Sale");
+                    _dbConnection.Execute("DELETE FROM AppliedOwnerAdjustment");
+                    _dbConnection.Execute("DELETE FROM BreadConfig");
+                    _dbConnection.Execute("UPDATE Product SET LocalStockQuantity = 0, MinStock = 0");
+                });
+
+                return (true, string.Empty);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PrepararTrocaDeLoja]: {ex.Message}");
+                return (false, "Nao foi possivel preparar a troca de loja: " + ex.Message);
+            }
+        }
+
+        #endregion
+
         #region Métodos de Pull (Recebimento de cadastros e estoques da nuvem)
 
         /// <summary>
         /// Puxa atualizações cadastrais do Supabase e atualiza a base SQLite local
         /// </summary>
-        public async Task<bool> PullUpdatesAsync(string tenantId, string storeId)
+        /// <param name="semearEstoqueDaNuvem">
+        /// Normalmente FALSO: a loja e dona do proprio estoque e o pull nunca reescreve a
+        /// coluna de saldo (senao a venda offline "voltava" a cada ciclo). So a TROCA DE
+        /// LOJA passa verdadeiro: ali a maquina deixou de ser um caixa e virou outro, e
+        /// carregar o saldo da loja anterior seria escrever o estoque de uma loja na outra.
+        /// </param>
+        public async Task<bool> PullUpdatesAsync(string tenantId, string storeId, bool semearEstoqueDaNuvem = false)
         {
             if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
             {
@@ -436,6 +497,20 @@ namespace PdvPadaria.Services
                                     prod.Name, prod.Barcode, prod.PriceSale, prod.PriceCost, prod.Type,
                                     prod.UnitMeasure, prod.Active, prod.ImageUrl, prod.CategoryId, prod.TenantId,
                                     DateTime.Now, prod.Id);
+
+                                // Troca de loja: o saldo tem que vir do estoque da loja NOVA.
+                                if (semearEstoqueDaNuvem)
+                                {
+                                    double qtd = 0, min = 0;
+                                    if (stockMap.TryGetValue(prod.Id, out var spTroca))
+                                    {
+                                        qtd = spTroca.Quantity;
+                                        min = spTroca.MinStock;
+                                    }
+                                    _dbConnection.Execute(
+                                        "UPDATE Product SET LocalStockQuantity=?, MinStock=? WHERE Id=?",
+                                        qtd, min, prod.Id);
+                                }
                             }
                             else
                             {
