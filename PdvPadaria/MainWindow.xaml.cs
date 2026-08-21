@@ -63,6 +63,8 @@ namespace PdvPadaria
         private int _totalCentavos = 0;
         private DispatcherTimer _syncTimer = null!;
         private readonly System.Threading.SemaphoreSlim _syncGate = new System.Threading.SemaphoreSlim(1, 1);
+        private readonly System.Threading.SemaphoreSlim _saleGate = new System.Threading.SemaphoreSlim(1, 1);
+        private bool _encerrando;
         private string _donoEmail = string.Empty;
         private string _donoPassword = string.Empty;
         private int _redePeriodoDias = 0;
@@ -311,31 +313,10 @@ namespace PdvPadaria
                         "Enquanto isso, NENHUMA venda e NENHUM estoque deste caixa sobe para a nuvem." +
                         "\n\nO caixa continua vendendo normalmente e nada se perde: as vendas ficam " +
                         "guardadas aqui e sobem sozinhas assim que a ligacao for refeita." +
-                        "\n\nCOMO RESOLVER: confira se a internet esta funcionando, feche o programa, " +
-                        "abra de novo e entre com o usuario DESTA loja. O caixa se liga a loja " +
-                        "sozinho no login - nao precisa mexer em nenhum arquivo.",
+                        "\n\nCOMO RESOLVER: confira a internet, saia e entre novamente. O caixa " +
+                        "renova a credencial sozinho - nao precisa mexer em nenhum arquivo.",
                         "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
-                }
-
-                // O caixa agora le e grava pela MESMA loja, entao nada sai torto por causa da
-                // divergencia. Mas ela continua sendo um alarme importante: as duas linhas
-                // foram preenchidas com lojas diferentes, e nao da para saber daqui QUAL das
-                // duas e a errada. Se quem errou foi o token, esta maquina esta lancando as
-                // vendas dela na loja do vizinho — por isso o aviso nao afirma que esta tudo
-                // certo, e manda confirmar com o responsavel em vez de escolher um lado.
-                if (StoreIdentityService.EnvDivergente)
-                {
-                    MessageBox.Show(
-                        "Esta maquina tem duas configuracoes de loja que NAO combinam." +
-                        "\n\n" +
-                        $"Loja em uso (vem do token):  {StoreIdentityService.StoreId}\n" +
-                        $"STORE_ID escrito no .env:    {StoreIdentityService.StoreIdDoEnv}" +
-                        "\n\nO caixa esta usando a loja do TOKEN para tudo: e nela que as vendas " +
-                        "deste caixa entram e e o estoque dela que aparece aqui." +
-                        "\n\nConfirme com o responsavel de qual loja e esta maquina. Se o token " +
-                        "estiver errado, as vendas de hoje estao entrando na loja errada.",
-                        "Configuracao desta maquina", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
             catch (Exception ex)
@@ -1551,6 +1532,8 @@ namespace PdvPadaria
                 return;
             }
 
+            if (_encerrando || !await _saleGate.WaitAsync(0)) return;
+
             try
             {
                 var connection = App.Database.GetConnection();
@@ -1574,7 +1557,7 @@ namespace PdvPadaria
 
                 var saleId = Guid.NewGuid().ToString();
 
-                string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
+                string tenantId = CurrentUser.TenantId;
                 string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
 
                 var terminalName = EnvService.Get("TERMINAL_NAME");
@@ -1671,6 +1654,10 @@ namespace PdvPadaria
             catch (Exception ex)
             {
                 MessageBox.Show($"Falha ao salvar venda localmente: {ex.Message}", "Erro Fatal", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                _saleGate.Release();
             }
         }
 
@@ -2207,7 +2194,7 @@ namespace PdvPadaria
             }
         }
 
-        private void LogoutButton_Click(object sender, RoutedEventArgs e)
+        private async void LogoutButton_Click(object sender, RoutedEventArgs e)
         {
             if (KioskToggle.IsChecked == true)
             {
@@ -2215,9 +2202,18 @@ namespace PdvPadaria
                 return;
             }
 
+            _encerrando = true;
+            _syncTimer?.Stop();
+
+            // Espera venda local e sync terminarem antes de outro login poder trocar
+            // a identidade/estoque desta mesma base SQLite.
+            await _saleGate.WaitAsync();
+            _saleGate.Release();
+            await _syncGate.WaitAsync();
+            _syncGate.Release();
+
             var login = new LoginWindow();
             login.Show();
-            _syncTimer?.Stop();
             Close();
         }
 
@@ -2339,7 +2335,8 @@ namespace PdvPadaria
                 // "Já lançado" sai do histórico de movimentos desta máquina, que agora inclui
                 // as entradas do dono (ver ApplyOwnerAdjustmentsAsync).
                 var lancadosRows = await connection.QueryAsync<ProdutoIdRow>(
-                    "SELECT DISTINCT ProductId FROM StockMovement");
+                    "SELECT DISTINCT ProductId FROM StockMovement WHERE StoreId = ?",
+                    StoreIdentityService.StoreId);
                 var lancados = new HashSet<string>(lancadosRows.Select(r => r.ProductId));
 
                 var ativos = await connection.Table<Product>().Where(p => p.Active).ToListAsync();
@@ -2463,8 +2460,44 @@ namespace PdvPadaria
 
                             try
                             {
-                                string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
+                                string tenantId = CurrentUser.TenantId;
                                 string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
+
+                                // "Definir" e absoluto e portanto precisa acontecer no servidor,
+                                // depois de esvaziar a fila local. Fazer isso como delta offline
+                                // daria resultado errado quando dois computadores usam a loja.
+                                if (!somar)
+                                {
+                                    if (inputVal < 0)
+                                    {
+                                        MessageBox.Show("O saldo do estoque não pode ser negativo.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+                                        return;
+                                    }
+
+                                    confirmBtn.IsEnabled = false;
+                                    var (sincronizou, erroSync) = await SincronizarDadosNuvem(aguardarCiclo: true);
+                                    if (!sincronizou)
+                                    {
+                                        confirmBtn.IsEnabled = true;
+                                        MessageBox.Show($"Conecte a internet e sincronize antes de definir um saldo.\n{erroSync}",
+                                            "Ajuste não salvo", MessageBoxButton.OK, MessageBoxImage.Warning);
+                                        return;
+                                    }
+
+                                    var (salvou, erroSet) = await SetEstoqueLojaAsync(storeId, product.Id, inputVal);
+                                    if (!salvou)
+                                    {
+                                        confirmBtn.IsEnabled = true;
+                                        MessageBox.Show($"Não foi possível definir o saldo: {erroSet}",
+                                            "Ajuste não salvo", MessageBoxButton.OK, MessageBoxImage.Error);
+                                        return;
+                                    }
+
+                                    await SincronizarDadosNuvem(aguardarCiclo: true);
+                                    adjustWindow.Close();
+                                    LoadStock(SearchStockBox.Text.Trim());
+                                    return;
+                                }
 
                                 bool saldoNegativo = false;
                                 bool produtoSumiu = false;
@@ -2481,7 +2514,7 @@ namespace PdvPadaria
                                     if (atual == null) { produtoSumiu = true; return; }
 
                                     double oldQty = atual.LocalStockQuantity;
-                                    double newQty = somar ? oldQty + inputVal : inputVal;
+                                    double newQty = oldQty + inputVal;
 
                                     if (newQty < 0) { saldoNegativo = true; return; }
 
@@ -3807,7 +3840,8 @@ namespace PdvPadaria
                 DateTime fullEnd = endDate.Date.Add(endTime);
 
                 var sales = await connection.Table<Sale>()
-                    .Where(s => s.SaleDate >= fullStart && s.SaleDate <= fullEnd)
+                    .Where(s => s.StoreId == StoreIdentityService.StoreId
+                             && s.SaleDate >= fullStart && s.SaleDate <= fullEnd)
                     .ToListAsync();
 
                 string paymentFilter = (HistoryPaymentFilterComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "TODOS";
@@ -4122,7 +4156,8 @@ namespace PdvPadaria
                 // Lógica de carregamento local (caixa local offline-first)
                 var connection = App.Database.GetConnection();
                 var sales = await connection.Table<Sale>()
-                    .Where(s => s.SaleDate >= fullStart && s.SaleDate <= fullEnd)
+                    .Where(s => s.StoreId == StoreIdentityService.StoreId
+                             && s.SaleDate >= fullStart && s.SaleDate <= fullEnd)
                     .ToListAsync();
 
                 string paymentFilter = (DashPaymentFilterComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "TODOS";
@@ -4249,56 +4284,53 @@ namespace PdvPadaria
             await SincronizarDadosNuvem();
         }
 
-        private async Task<(bool Success, string Error)> SincronizarDadosNuvem()
+        private async Task<(bool Success, string Error)> SincronizarDadosNuvem(bool aguardarCiclo = false)
         {
+            if (_encerrando) return (true, string.Empty);
+
             // Trava anti-sobreposição ATÔMICA: timer de 60s, botão manual e o sync disparado após
             // venda/cancelamento podem vir de threads diferentes. WaitAsync(0) não bloqueia — se já
             // houver um sync em curso, sai sem erro (evita dois ciclos simultâneos corromperem o SQLite).
-            if (!await _syncGate.WaitAsync(0)) return (true, string.Empty);
+            if (aguardarCiclo)
+                await _syncGate.WaitAsync();
+            else if (!await _syncGate.WaitAsync(0))
+                return (true, string.Empty);
             try
             {
+                if (_encerrando) return (true, string.Empty);
+
                 using var syncService = new SyncService(App.Database.GetSyncConnection());
 
-                string tenantId = EnvService.Get("TENANT_ID", CurrentUser.TenantId);
+                string tenantId = CurrentUser.TenantId;
                 string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
 
                 bool pushSuccess = await syncService.PushSalesAsync(tenantId, storeId);
-                bool pullSuccess = await syncService.PullUpdatesAsync(tenantId, storeId);
-
-                // Envia a "foto" do estoque local desta loja para a nuvem (alimenta o painel do dono).
-                // Só envia se a VENDA e o CATÁLOGO subiram com sucesso: garante que o snapshot publicado
-                // já reflete as vendas que o causaram (senão saldo e histórico divergem no painel) e que
-                // produtos novos já foram semeados localmente (evita subir estoque zerado).
-                bool stockSuccess = true;
-                if (pushSuccess && pullSuccess)
-                {
-                    stockSuccess = await syncService.PushStockSnapshotAsync(tenantId, storeId);
-                }
+                // So troca a base local depois do ACK. Se a resposta do push se perdeu,
+                // mantemos a fila; o retry pelo mesmo StockMovement.id e idempotente.
+                bool pullSuccess = pushSuccess
+                    && await syncService.PullUpdatesAsync(tenantId, storeId);
 
                 var pendingCount = await App.Database.GetConnection().Table<Sale>().Where(s => !s.IsSynced).CountAsync();
 
-                // O verde depende TAMBEM do stockSuccess. Antes bastava venda+cadastro terem
-                // subido: o caixa mostrava "Sincronizado" enquanto a foto do estoque era
-                // recusada pela nuvem e o painel do dono ficava congelado.
                 Dispatcher.Invoke(() => {
                     if (pendingCount > 0)
                     {
                         SyncStatusText.Text = $"{pendingCount} venda(s) pendente(s)";
                         SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Yellow;
                     }
-                    else if (pushSuccess && pullSuccess && stockSuccess)
+                    else if (pushSuccess && pullSuccess)
                     {
                         SyncStatusText.Text = "Sincronizado";
                         SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Green;
                     }
                     else
                     {
-                        SyncStatusText.Text = "Estoque NAO subiu";
+                        SyncStatusText.Text = "Falha na sincronizacao";
                         SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Red;
                     }
                 });
 
-                if (!pushSuccess || !pullSuccess || !stockSuccess)
+                if (!pushSuccess || !pullSuccess)
                 {
                     return (false, syncService.LastError);
                 }

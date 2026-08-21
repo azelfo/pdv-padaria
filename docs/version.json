@@ -1,5 +1,5 @@
 {
-  "version": "1.1.6",
+  "version": "1.1.7",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "notes": "O caixa se liga a loja SOZINHO, no login. Ao entrar com o usuario da loja (com internet), a maquina recebe do servidor a sua propria credencial e volta a mandar venda e estoque na hora - ninguem precisa mais abrir arquivo de configuracao nem digitar codigo em maquina nenhuma. Se este caixa estava parado sem sincronizar, ele se resolve na primeira vez que alguem entrar com o usuario da loja. Trocar a maquina de loja tambem passou a ser seguro: ao entrar com o usuario de OUTRA loja, o caixa troca a credencial e recarrega o estoque da loja nova, em vez de publicar nela o saldo da loja anterior. Se ainda houver venda esperando para subir, a troca e adiada e o caixa avisa - venda nenhuma se perde. Junto: o caixa parou de dar a sincronizacao por feita quando a nuvem recusa o envio, e a luz so fica verde quando o estoque tambem sobe. Esta atualizacao NAO apaga nada e NAO altera a configuracao existente."
+  "notes": "Corrige os acessos das lojas sem apagar historico. Tokens vencidos se renovam sozinhos no login online, inclusive quando o DONO entra na maquina, e o STORE_ID antigo deixa de gerar aviso falso. A troca de loja preserva vendas e historico e so termina depois de carregar os dados da loja correta. Nao e preciso desinstalar, limpar o computador nem editar arquivos."
 }

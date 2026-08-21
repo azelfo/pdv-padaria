@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Net.Http;
-using System.Threading.Tasks;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using PdvPadaria.Models;
@@ -96,12 +95,28 @@ namespace PdvPadaria.Views
                             {
                                 var onlineUser = users[0];
 
+                                if (string.IsNullOrWhiteSpace(onlineUser.TenantId))
+                                {
+                                    ShowError("Este usuário não está vinculado a uma rede. Corrija o cadastro antes de usar este caixa.");
+                                    return;
+                                }
+
                                 // RPC já validou a senha no servidor. Grava localmente
                                 // como hash BCrypt (derivado da senha digitada) para
                                 // permitir login offline futuro deste operador.
                                 onlineUser.Password = PasswordHasher.Hash(password);
 
                                 var connection = App.Database.GetConnection();
+                                int produtosDeOutraRede = await connection.ExecuteScalarAsync<int>(
+                                    "SELECT COUNT(*) FROM Product WHERE TenantId IS NOT NULL " +
+                                    "AND TenantId <> '' AND LOWER(TenantId) <> 'tenant-test' " +
+                                    "AND Id NOT IN ('prod-pao-carioca', 'prod-pao-massa-fina') " +
+                                    "AND LOWER(TenantId) <> LOWER(?)", onlineUser.TenantId);
+                                if (produtosDeOutraRede > 0)
+                                {
+                                    ShowError("Este computador já pertence a outra rede. Por segurança, use uma instalação separada; nenhum dado local foi alterado.");
+                                    return;
+                                }
                                 await connection.InsertOrReplaceAsync(onlineUser);
 
                                 user = onlineUser;
@@ -143,6 +158,12 @@ namespace PdvPadaria.Views
                         return;
                     }
 
+                    if (string.IsNullOrWhiteSpace(user.TenantId))
+                    {
+                        ShowError("Este usuário local não está vinculado a uma rede. Conecte a internet e entre novamente.");
+                        return;
+                    }
+
                     // Migracao transparente: se a senha local ainda estava em texto
                     // puro (base antiga), re-grava como hash BCrypt agora.
                     if (PasswordHasher.NeedsUpgrade(user.Password))
@@ -150,9 +171,52 @@ namespace PdvPadaria.Views
                         user.Password = PasswordHasher.Hash(password);
                         await connection.UpdateAsync(user);
                     }
+
+                    // DONO enxerga todas as lojas da SUA rede, não de outro tenant. O
+                    // catálogo local identifica a rede desta instalação mesmo offline.
+                    int produtosDeOutraRede = await connection.ExecuteScalarAsync<int>(
+                        "SELECT COUNT(*) FROM Product WHERE TenantId IS NOT NULL " +
+                        "AND TenantId <> '' AND LOWER(TenantId) <> 'tenant-test' " +
+                        "AND Id NOT IN ('prod-pao-carioca', 'prod-pao-massa-fina') " +
+                        "AND LOWER(TenantId) <> LOWER(?)", user.TenantId);
+                    if (produtosDeOutraRede > 0)
+                    {
+                        ShowError("Este usuário pertence a outra rede e não pode operar esta instalação offline.");
+                        return;
+                    }
+
+                    // Um usuário já usado neste PC fica disponível offline, mas isso não
+                    // autoriza uma loja a operar o caixa de outra. DONO é global; operador
+                    // de loja precisa combinar com a identidade já confirmada da máquina.
+                    string lojaDoToken = StoreIdentityService.LojaDoTokenConhecida();
+                    string lojaDoEstoque = StoreIdentityService.LojaDoEstoque();
+                    if (string.IsNullOrWhiteSpace(lojaDoEstoque))
+                    {
+                        ShowError("Após esta atualização, a origem do estoque precisa ser confirmada uma vez. Conecte a internet e entre novamente; nenhum dado local será apagado.");
+                        return;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(lojaDoToken)
+                        && !string.IsNullOrWhiteSpace(lojaDoEstoque)
+                        && !string.Equals(lojaDoToken, lojaDoEstoque, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ShowError("Esta máquina está no meio de uma troca de loja. Conecte a internet e entre novamente para concluir sem misturar os estoques.");
+                        return;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(user.StoreId))
+                    {
+                        string lojaConhecida = !string.IsNullOrWhiteSpace(lojaDoToken) ? lojaDoToken : lojaDoEstoque;
+                        if (!string.IsNullOrWhiteSpace(lojaConhecida)
+                            && !string.Equals(lojaConhecida, user.StoreId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            ShowError("Este usuário pertence a outra loja. Para trocar esta máquina de loja, faça o primeiro acesso com internet.");
+                            return;
+                        }
+                    }
                 }
 
-                // 3. Sucesso no login: Se logou online, puxa produtos e estoques em background
+                // 3. Sucesso online: renova a credencial e conclui uma eventual troca de loja.
                 if (isOnlineSuccess && user != null)
                 {
                     // O login é o momento em que a máquina descobre de que loja ela é: o
@@ -164,41 +228,49 @@ namespace PdvPadaria.Views
                     string lojaDoUsuario = user.StoreId ?? string.Empty;
                     await StoreIdentityService.ResolverAsync(lojaDoUsuario);
 
-                    // Trocar de loja mexe no banco local (ele guarda o ESTOQUE), então o
-                    // saldo precisa ser semeado a partir da loja nova. Máquina nova, que
-                    // nunca respondeu por loja nenhuma, não tem nada a limpar.
-                    bool semearEstoque = false;
-
-                    if (StoreIdentityService.PrecisaRegistrar(lojaDoUsuario))
+                    // Usuário de loja vincula a máquina à sua loja. DONO mantém a loja da
+                    // própria máquina e pode renovar o token dela sem ganhar uma loja fixa.
+                    string lojaAlvo = lojaDoUsuario;
+                    if (string.IsNullOrWhiteSpace(lojaAlvo))
                     {
-                        bool podeSeguir = true;
+                        lojaAlvo = !StoreIdentityService.TokenAusente && !StoreIdentityService.TokenInvalido
+                            ? StoreIdentityService.StoreId
+                            : StoreIdentityService.LojaDoTokenConhecida();
+                    }
 
-                        if (StoreIdentityService.EhTrocaDeLoja(lojaDoUsuario))
+                    if (string.IsNullOrWhiteSpace(lojaAlvo))
+                    {
+                        ShowError("Esta máquina ainda não está ligada a uma loja. Entre uma vez, com internet, usando o usuário da loja que funcionará neste caixa.");
+                        return;
+                    }
+
+                    bool semearEstoque = StoreIdentityService.PrecisaSemearEstoque(lojaAlvo);
+                    if (semearEstoque)
+                    {
+                        using var prep = new SyncService(App.Database.GetSyncConnection());
+                        var (ok, motivo) = prep.PodeTrocarDeLoja(lojaAlvo);
+                        if (!ok)
                         {
-                            using var prep = new SyncService(App.Database.GetSyncConnection());
-                            var (ok, motivo) = prep.PrepararTrocaDeLoja();
-                            podeSeguir = ok;
-                            semearEstoque = ok;
-
-                            if (!ok)
-                            {
-                                // Continua o login na loja ATUAL: barrar o operador seria pior
-                                // que adiar a troca, e as vendas pendentes precisam subir.
-                                MessageBox.Show(motivo, "Troca de loja adiada",
-                                    MessageBoxButton.OK, MessageBoxImage.Warning);
-                            }
-                        }
-
-                        if (podeSeguir)
-                        {
-                            bool registrou = await StoreIdentityService.RegistrarPeloLoginAsync(email, password);
-                            System.Diagnostics.Debug.WriteLine($"[Registro do caixa]: {(registrou ? "ok" : "falhou")}");
-                            if (!registrou) semearEstoque = false;
+                            MessageBox.Show(motivo, "Troca de loja adiada",
+                                MessageBoxButton.OK, MessageBoxImage.Warning);
+                            return;
                         }
                     }
 
-                    string tenantId = EnvService.Get("TENANT_ID", user.TenantId);
-                    string storeId = StoreIdentityService.Atual(user.StoreId ?? "store-test");
+                    if (StoreIdentityService.PrecisaRegistrar(lojaAlvo))
+                    {
+                        bool registrou = await StoreIdentityService.RegistrarPeloLoginAsync(email, password, lojaAlvo);
+                        System.Diagnostics.Debug.WriteLine($"[Registro do caixa]: {(registrou ? "ok" : "falhou")}");
+                        if (!registrou)
+                        {
+                            ShowError("Não foi possível renovar o acesso desta máquina agora. Confira a internet e tente novamente; nenhum dado local foi apagado.");
+                            return;
+                        }
+                    }
+
+                    string tenantId = user.TenantId;
+                    string storeId = StoreIdentityService.StoreId;
+                    semearEstoque = StoreIdentityService.PrecisaSemearEstoque(storeId);
 
                     if (semearEstoque)
                     {
@@ -207,28 +279,26 @@ namespace PdvPadaria.Views
                         try
                         {
                             using var troca = new SyncService(App.Database.GetSyncConnection());
-                            await troca.PullUpdatesAsync(tenantId, storeId, semearEstoqueDaNuvem: true);
+                            // O ledger exige ACK antes do rebase: se a resposta do envio se
+                            // perder, a fila continua local e o mesmo id pode ser repetido.
+                            bool enviou = await troca.PushSalesAsync(tenantId, storeId);
+                            bool carregou = enviou
+                                && await troca.PullUpdatesAsync(tenantId, storeId);
+                            if (!carregou || !StoreIdentityService.ConfirmarEstoqueDaLoja(storeId))
+                            {
+                                ShowError("A loja foi identificada, mas o estoque não terminou de carregar. Tente entrar novamente com a internet funcionando; nenhum histórico foi apagado.");
+                                return;
+                            }
                         }
                         catch (Exception ex)
                         {
                             System.Diagnostics.Debug.WriteLine($"[Pull da troca de loja]: {ex.Message}");
+                            ShowError("Não foi possível carregar o estoque da loja. Tente entrar novamente; nenhum histórico foi apagado.");
+                            return;
                         }
                     }
-                    else
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                using var syncService = new SyncService(App.Database.GetSyncConnection());
-                                await syncService.PullUpdatesAsync(tenantId, storeId);
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[Sync Initial Pull Error]: {ex.Message}");
-                            }
-                        });
-                    }
+                    // O primeiro ciclo da MainWindow já faz o pull. Disparar outro aqui
+                    // concorria com login/logout e podia aplicar dados da loja anterior.
                 }
 
                 // Sucesso completo: Abre a janela principal do PDV

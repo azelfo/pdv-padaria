@@ -1,6 +1,5 @@
 using System;
 using System.Windows;
-using System.Threading.Tasks;
 using PdvPadaria.Services;
 
 namespace PdvPadaria
@@ -55,30 +54,9 @@ namespace PdvPadaria
                 Database = new DatabaseService();
                 await Database.InitializeAsync();
 
-                // Tenta puxar atualizações cadastrais da nuvem de forma assíncrona em background.
-                // A loja vem do TOKEN desta máquina (StoreIdentityService), não da linha
-                // STORE_ID: é o token que decide onde a venda cai, então é ele que precisa
-                // decidir também qual estoque o caixa lê.
-                string tenantId = EnvService.Get("TENANT_ID");
-                if (!string.IsNullOrEmpty(tenantId))
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await StoreIdentityService.ResolverAsync();
-                            string storeId = StoreIdentityService.Atual();
-                            if (string.IsNullOrEmpty(storeId)) return;
-
-                            using var syncService = new SyncService(Database.GetSyncConnection());
-                            await syncService.PullUpdatesAsync(tenantId, storeId);
-                        }
-                        catch
-                        {
-                            // Ignora falhas na inicialização (ex: offline) pois o caixa funciona de forma autônoma offline
-                        }
-                    });
-                }
+                // A identidade e o primeiro pull são resolvidos uma única vez, no login.
+                // Fazê-los aqui também criava uma corrida: a resposta de um token antigo
+                // podia chegar depois do registro novo e sobrescrever a loja correta.
 
                 // 2. Abre a tela de Login
                 var loginWindow = new Views.LoginWindow();

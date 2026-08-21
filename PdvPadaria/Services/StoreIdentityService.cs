@@ -51,18 +51,16 @@ namespace PdvPadaria.Services
         /// <summary>A máquina ainda não tem token nenhum (nem registrado, nem no .env).</summary>
         public static bool TokenAusente { get; private set; }
 
-        /// <summary>O STORE_ID escrito no .env aponta para outra loja (e foi ignorado).</summary>
-        public static bool EnvDivergente { get; private set; }
-
-        /// <summary>Valor da linha STORE_ID do .env, para poder mostrar a divergência na tela.</summary>
-        public static string StoreIdDoEnv { get; private set; } = string.Empty;
-
         private static string PastaDados => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "pdv-padaria");
 
         // Loja descoberta pelo token, guardada para o caixa continuar sabendo quem é
         // quando abrir sem internet.
         private static string CaminhoLoja => Path.Combine(PastaDados, "loja-identidade.txt");
+
+        // Loja cujo ESTOQUE está hoje no SQLite. É separada da loja do token porque uma
+        // troca só termina depois que o saldo da loja nova foi baixado com sucesso.
+        private static string CaminhoLojaDoEstoque => Path.Combine(PastaDados, "estoque-loja.txt");
 
         // Token PRÓPRIO desta máquina, emitido no login. Fica fora do .env de propósito:
         // o .env vai junto com a pasta do programa e já vazou uma vez dentro do instalador.
@@ -95,6 +93,30 @@ namespace PdvPadaria.Services
             return EnvService.Get("STORE_ID", fallback);
         }
 
+        /// <summary>Loja cujo saldo está carregado no SQLite desta máquina.</summary>
+        public static string LojaDoEstoque()
+        {
+            GarantirCacheDoEstoque();
+            return LerArquivo(CaminhoLojaDoEstoque);
+        }
+
+        /// <summary>Última loja confirmada pelo token, sem confiar no STORE_ID legado.</summary>
+        public static string LojaDoTokenConhecida()
+        {
+            if (!string.IsNullOrWhiteSpace(_storeId)) return _storeId;
+            return LerArquivo(CaminhoLoja);
+        }
+
+        /// <summary>
+        /// Confirma a troca só depois que o estoque da loja nova foi baixado. Assim, se a
+        /// internet cair no meio, o próximo login tenta novamente em vez de abrir misturado.
+        /// </summary>
+        public static bool ConfirmarEstoqueDaLoja(string storeId)
+        {
+            if (string.IsNullOrWhiteSpace(storeId)) return false;
+            return GravarArquivo(CaminhoLojaDoEstoque, storeId);
+        }
+
         /// <summary>
         /// Pergunta à nuvem de quem é o token desta máquina e fixa a resposta. Roda uma vez
         /// por execução, a não ser que um registro novo peça para refazer. Nunca lança:
@@ -105,10 +127,9 @@ namespace PdvPadaria.Services
             if (_resolvido) return;
             _resolvido = true;
 
-            StoreIdDoEnv = EnvService.Get("STORE_ID");
+            GarantirCacheDoEstoque();
             TokenInvalido = false;
             TokenAusente = false;
-            EnvDivergente = false;
 
             string token = TokenAtual();
             if (string.IsNullOrWhiteSpace(token))
@@ -124,9 +145,6 @@ namespace PdvPadaria.Services
             {
                 _storeId = lojaDoToken;
                 GravarArquivo(CaminhoLoja, lojaDoToken);
-
-                EnvDivergente = !string.IsNullOrWhiteSpace(StoreIdDoEnv)
-                                && !string.Equals(StoreIdDoEnv, lojaDoToken, StringComparison.OrdinalIgnoreCase);
                 return;
             }
 
@@ -154,17 +172,20 @@ namespace PdvPadaria.Services
             return !string.Equals(_storeId, storeIdDoUsuario, StringComparison.OrdinalIgnoreCase);
         }
 
-        /// <summary>
-        /// É uma TROCA de loja (a máquina já respondia por outra), e não uma máquina nova?
-        /// Só neste caso o banco local precisa ser limpo antes: ele guarda o estoque, e o
-        /// estoque da loja anterior não pode ser publicado como se fosse o da nova.
-        /// </summary>
-        public static bool EhTrocaDeLoja(string storeIdDoUsuario)
+        /// <summary>O token mudou de loja, mas o estoque novo ainda não foi carregado?</summary>
+        public static bool PrecisaSemearEstoque(string storeId)
         {
-            if (string.IsNullOrWhiteSpace(storeIdDoUsuario)) return false;
-            if (string.IsNullOrWhiteSpace(_storeId)) return false;
+            if (string.IsNullOrWhiteSpace(storeId)) return false;
+            return !string.Equals(LojaDoEstoque(), storeId, StringComparison.OrdinalIgnoreCase);
+        }
 
-            return !string.Equals(_storeId, storeIdDoUsuario, StringComparison.OrdinalIgnoreCase);
+        /// <summary>
+        /// Marca a recusa recebida durante o sync. Permite sair e entrar novamente no mesmo
+        /// processo para renovar a credencial, sem depender de fechar o aplicativo inteiro.
+        /// </summary>
+        public static void MarcarTokenInvalido()
+        {
+            TokenInvalido = true;
         }
 
         /// <summary>
@@ -172,7 +193,7 @@ namespace PdvPadaria.Services
         /// operador acabou de digitar. A senha não é guardada em lugar nenhum: ela só
         /// atravessa esta chamada. O token volta UMA vez e fica salvo em %AppData%.
         /// </summary>
-        public static async Task<bool> RegistrarPeloLoginAsync(string email, string senha)
+        public static async Task<bool> RegistrarPeloLoginAsync(string email, string senha, string storeId)
         {
             string url = EnvService.Get("SUPABASE_URL");
             string anonKey = EnvService.Get("SUPABASE_ANON_KEY");
@@ -184,7 +205,9 @@ namespace PdvPadaria.Services
                 {
                     p_email = email,
                     p_senha = senha,
-                    p_terminal = EnvService.Get("TERMINAL_NAME", Environment.MachineName)
+                    p_terminal = EnvService.Get("TERMINAL_NAME", Environment.MachineName),
+                    p_store_id = storeId,
+                    p_token_atual = TokenAtual()
                 });
 
                 using (var request = new HttpRequestMessage(HttpMethod.Post, $"{url.TrimEnd('/')}/rest/v1/rpc/registrar_caixa"))
@@ -210,17 +233,19 @@ namespace PdvPadaria.Services
                     }
 
                     string token = json["token"]?.ToString() ?? string.Empty;
-                    string storeId = json["storeId"]?.ToString() ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(storeId)) return false;
+                    string storeIdRegistrado = json["storeId"]?.ToString() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(storeIdRegistrado)) return false;
 
-                    GravarArquivo(CaminhoToken, token);
-                    GravarArquivo(CaminhoLoja, storeId);
+                    if (!GravarArquivo(CaminhoToken, token)) return false;
+                    if (!GravarArquivo(CaminhoLoja, storeIdRegistrado))
+                    {
+                        _resolvido = false;
+                        return false;
+                    }
 
-                    _storeId = storeId;
+                    _storeId = storeIdRegistrado;
                     TokenAusente = false;
                     TokenInvalido = false;
-                    EnvDivergente = !string.IsNullOrWhiteSpace(StoreIdDoEnv)
-                                    && !string.Equals(StoreIdDoEnv, storeId, StringComparison.OrdinalIgnoreCase);
                     return true;
                 }
             }
@@ -277,16 +302,39 @@ namespace PdvPadaria.Services
             catch { return string.Empty; }
         }
 
-        private static void GravarArquivo(string caminho, string conteudo)
+        private static bool GarantirCacheDoEstoque()
+        {
+            if (File.Exists(CaminhoLojaDoEstoque)) return true;
+
+            // Migração da versão antiga: se token e STORE_ID concordavam, preserva o
+            // estoque local e evita uma carga desnecessária. Quando divergem (o caso das
+            // fotos do incidente), deixa a origem desconhecida e exige um login online
+            // antes de confirmar qualquer loja. Nunca escolhe silenciosamente um lado.
+            string lojaDoToken = LerArquivo(CaminhoLoja);
+            string lojaDoEnv = EnvService.Get("STORE_ID");
+            if (!string.IsNullOrWhiteSpace(lojaDoToken)
+                && !string.IsNullOrWhiteSpace(lojaDoEnv)
+                && !string.Equals(lojaDoToken, lojaDoEnv, StringComparison.OrdinalIgnoreCase))
+            {
+                return GravarArquivo(CaminhoLojaDoEstoque, string.Empty);
+            }
+
+            string conhecida = !string.IsNullOrWhiteSpace(lojaDoToken) ? lojaDoToken : lojaDoEnv;
+            return GravarArquivo(CaminhoLojaDoEstoque, conhecida);
+        }
+
+        private static bool GravarArquivo(string caminho, string conteudo)
         {
             try
             {
                 Directory.CreateDirectory(PastaDados);
                 File.WriteAllText(caminho, conteudo);
+                return true;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[StoreIdentity: gravar {Path.GetFileName(caminho)}]: {ex.Message}");
+                return false;
             }
         }
     }

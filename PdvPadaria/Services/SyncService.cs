@@ -80,10 +80,13 @@ namespace PdvPadaria.Services
             if (string.IsNullOrEmpty(codigo)) return null;
 
             if (codigo == "invalid_token")
+            {
+                StoreIdentityService.MarcarTokenInvalido();
                 return "A credencial de sincronizacao desta maquina nao vale mais. " +
                        "Enquanto isso, NENHUMA venda e NENHUM estoque deste caixa sobe para a nuvem. " +
-                       "Para resolver: com a internet funcionando, saia e entre de novo com o " +
-                       "usuario desta loja - o caixa pega uma credencial nova sozinho.";
+                       "Para resolver: com a internet funcionando, saia e entre de novo. " +
+                       "O caixa renova a credencial sozinho.";
+            }
 
             return $"A nuvem recusou o envio: {codigo}";
         }
@@ -150,33 +153,25 @@ namespace PdvPadaria.Services
                 bool pushSuccess = await PushVendasRpcAsync(salesToSend, itemsToSend, movementsToSend);
                 if (!pushSuccess) return false;
 
-                // 4. Se tudo deu certo, atualiza os status no SQLite local de forma transacional e atômica
+                // 4. ACK exato: marca apenas os IDs que realmente viajaram. Uma venda pode
+                // ser cancelada enquanto o HTTP esta em voo; nesse caso ela continua pendente
+                // para enviar o novo PaymentStatus, e o movimento de estorno nao e engolido.
                 _dbConnection.RunInTransaction(() =>
                 {
-                    foreach (var sale in pendingSales)
+                    DateTime ackEm = DateTime.Now;
+                    foreach (var sale in salesToSend)
                     {
-                        sale.IsSynced = true;
-                        sale.SyncedAt = DateTime.Now;
-                        _dbConnection.Update(sale);
-
-                        var movements = _dbConnection.Table<StockMovement>()
-                            .Where(m => m.SaleId == sale.Id)
-                            .ToList();
-                        
-                        foreach (var m in movements)
-                        {
-                            m.IsSynced = true;
-                            m.SyncedAt = DateTime.Now;
-                            _dbConnection.Update(m);
-                        }
+                        _dbConnection.Execute(
+                            "UPDATE Sale SET IsSynced = 1, SyncedAt = ? " +
+                            "WHERE Id = ? AND IsSynced = 0 AND PaymentStatus = ?",
+                            ackEm, sale.Id, sale.PaymentStatus);
                     }
 
-                    // Marca também os movimentos avulsos que foram no mesmo payload.
-                    foreach (var m in avulsos)
+                    foreach (var movimento in movementsToSend)
                     {
-                        m.IsSynced = true;
-                        m.SyncedAt = DateTime.Now;
-                        _dbConnection.Update(m);
+                        _dbConnection.Execute(
+                            "UPDATE StockMovement SET IsSynced = 1, SyncedAt = ? WHERE Id = ?",
+                            ackEm, movimento.Id);
                     }
                 });
 
@@ -251,6 +246,25 @@ namespace PdvPadaria.Services
                         System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_vendas recusado]: {corpo}");
                         return false;
                     }
+
+                    try
+                    {
+                        var tokenResposta = JsonConvert.DeserializeObject<Newtonsoft.Json.Linq.JToken>(corpo);
+                        if (tokenResposta is Newtonsoft.Json.Linq.JArray array)
+                            tokenResposta = array.First;
+                        var objetoResposta = tokenResposta as Newtonsoft.Json.Linq.JObject;
+                        if (objetoResposta?["mode"]?.ToString() != "ledger")
+                        {
+                            LastError = "A atualizacao segura do servidor ainda nao esta ativa. " +
+                                        "As operacoes continuam na fila local para nova tentativa.";
+                            return false;
+                        }
+                    }
+                    catch
+                    {
+                        LastError = "A nuvem nao confirmou o envio. As operacoes continuam na fila local.";
+                        return false;
+                    }
                     return true;
                 }
             }
@@ -264,147 +278,50 @@ namespace PdvPadaria.Services
 
         #endregion
 
-        #region Métodos de Push de Estoque (envia a "foto" do estoque local da loja para a nuvem)
-
-        /// <summary>
-        /// Envia o estoque local atual desta loja para a nuvem (upsert em StoreProduct via RPC push_estoque).
-        /// Como cada loja tem 1 caixa, o estoque local é a fonte da verdade dela — o dono lê esses
-        /// valores no painel consolidado. É uma "foto" absoluta (não um delta), então é idempotente
-        /// e nunca duplica baixa, mesmo que rode várias vezes. Produtos que não existem na nuvem
-        /// são ignorados server-side (a função filtra por FK), evitando erro com itens só-locais.
-        /// </summary>
-        public async Task<bool> PushStockSnapshotAsync(string tenantId, string storeId)
-        {
-            if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
-                return false;
-            if (string.IsNullOrEmpty(storeId))
-            {
-                LastError = "STORE_ID ausente no .env desta maquina: o caixa nao sabe de que loja ele e.";
-                return false;
-            }
-
-            // Token secreto da loja (autoriza a escrita do estoque na nuvem; o servidor deriva a loja
-            // dele, ignorando qualquer storeId do payload). Sem token o estoque desta loja NUNCA
-            // chega ao painel do dono, entao isto e uma falha e precisa aparecer na tela — antes
-            // devolvia "true" e o caixa exibia "Sincronizado" em verde com o estoque parado.
-            string storeToken = StoreIdentityService.TokenAtual();
-            if (string.IsNullOrEmpty(storeToken))
-            {
-                LastError = "Esta maquina ainda nao tem credencial de sincronizacao: o estoque " +
-                            "desta loja nao sobe para o painel. Entre com o usuario desta loja " +
-                            "estando conectado a internet.";
-                return false;
-            }
-
-            try
-            {
-                var products = _dbConnection.Table<Product>().ToList();
-                if (products.Count == 0) return true;
-
-                var snapshot = products.Select(p => new
-                {
-                    ProductId = p.Id,
-                    Quantity = p.LocalStockQuantity
-                }).ToList();
-
-                var settings = new JsonSerializerSettings
-                {
-                    ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver()
-                };
-                var body = new { p_payload = new { stock = snapshot }, p_token = storeToken };
-                var requestBody = JsonConvert.SerializeObject(body, settings);
-                var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-
-                var url = $"{_supabaseUrl.TrimEnd('/')}/rest/v1/rpc/push_estoque";
-                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
-                {
-                    request.Content = content;
-                    request.Headers.Add("apikey", _supabaseAnonKey);
-                    request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
-
-                    var response = await _httpClient.SendAsync(request);
-                    string corpo = await response.Content.ReadAsStringAsync();
-
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        LastError = $"Erro HTTP {response.StatusCode} no push_estoque: {corpo}";
-                        System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_estoque Error]: {LastError}");
-                        return false;
-                    }
-
-                    // Mesma armadilha do push_vendas: {"error":"invalid_token","stock":0} vem com
-                    // HTTP 200. Sem ler o corpo, a foto do estoque era descartada em silencio e o
-                    // painel do dono ficava congelado no ultimo numero que ele mesmo lancou.
-                    string? erroRpc = ErroDaResposta(corpo);
-                    if (erroRpc != null)
-                    {
-                        LastError = erroRpc;
-                        System.Diagnostics.Debug.WriteLine($"[Supabase RPC push_estoque recusado]: {corpo}");
-                        return false;
-                    }
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                System.Diagnostics.Debug.WriteLine($"[Push Estoque Error]: {ex.Message}");
-                return false;
-            }
-        }
-
-        #endregion
-
         #region Troca de loja desta máquina
 
         /// <summary>
-        /// Limpa o que era do caixa ANTERIOR antes desta máquina virar caixa de outra loja.
+        /// Confere se esta máquina pode virar caixa de outra loja.
         ///
-        /// A credencial troca no login, mas o banco local não trocava junto — e ele guarda o
-        /// ESTOQUE. Sem esta limpeza, a primeira sincronização depois da troca publicaria o
-        /// saldo da loja antiga como se fosse o da loja nova, apagando o número certo. Foi
-        /// assim que, num teste, o estoque de uma loja apareceu carimbado em outra.
+        /// A credencial troca no login, mas o SQLite também guarda o ESTOQUE. Antes de baixar
+        /// o saldo da loja nova, precisamos garantir que não há operação antiga esperando.
         ///
-        /// Recusa a troca enquanto houver venda ou movimento não enviado: essas linhas são da
-        /// loja anterior e só sobem com a credencial anterior. Perder venda para trocar de
-        /// loja seria um preço absurdo — melhor mandar sincronizar primeiro.
+        /// Pendencias da loja que esta entrando sao preservadas e reaplicadas sobre o snapshot
+        /// correto. A troca so e recusada se houver operacao de OUTRA loja: ela nao pode subir
+        /// usando a credencial nova.
         ///
-        /// O histórico apagado aqui NÃO se perde: ele já subiu, e continua no painel do dono.
+        /// Não apaga nada. O histórico sincronizado pode continuar no SQLite, separado pelo
+        /// StoreId, e o saldo da loja nova é semeado somente depois do registro funcionar.
         /// </summary>
-        public (bool Ok, string Motivo) PrepararTrocaDeLoja()
+        public (bool Ok, string Motivo) PodeTrocarDeLoja(string storeId)
         {
             try
             {
+                // Pendencias da propria loja podem ser preservadas: o pull de semeadura
+                // baixa o snapshot correto e reaplica somente os deltas desses movimentos.
+                // O que nao pode e levar operacoes de OUTRA loja junto com a troca.
                 int vendasPendentes = _dbConnection.ExecuteScalar<int>(
-                    "SELECT COUNT(*) FROM Sale WHERE IsSynced = 0");
+                    "SELECT COUNT(*) FROM Sale WHERE IsSynced = 0 " +
+                    "AND (StoreId IS NULL OR StoreId = '' OR StoreId <> ?)", storeId);
                 int movimentosPendentes = _dbConnection.ExecuteScalar<int>(
-                    "SELECT COUNT(*) FROM StockMovement WHERE IsSynced = 0");
+                    "SELECT COUNT(*) FROM StockMovement WHERE IsSynced = 0 " +
+                    "AND (StoreId IS NULL OR StoreId = '' OR StoreId <> ?)", storeId);
 
                 if (vendasPendentes > 0 || movimentosPendentes > 0)
                 {
                     return (false,
                         $"Esta maquina ainda tem {vendasPendentes} venda(s) e {movimentosPendentes} " +
-                        "movimento(s) de estoque da loja anterior esperando para subir. " +
+                        "movimento(s) de estoque de outra loja esperando para subir. " +
                         "Conecte a internet e espere a sincronizacao terminar antes de usar " +
                         "esta maquina em outra loja.");
                 }
-
-                _dbConnection.RunInTransaction(() =>
-                {
-                    _dbConnection.Execute("DELETE FROM SaleItem");
-                    _dbConnection.Execute("DELETE FROM StockMovement");
-                    _dbConnection.Execute("DELETE FROM Sale");
-                    _dbConnection.Execute("DELETE FROM AppliedOwnerAdjustment");
-                    _dbConnection.Execute("DELETE FROM BreadConfig");
-                    _dbConnection.Execute("UPDATE Product SET LocalStockQuantity = 0, MinStock = 0");
-                });
 
                 return (true, string.Empty);
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[PrepararTrocaDeLoja]: {ex.Message}");
-                return (false, "Nao foi possivel preparar a troca de loja: " + ex.Message);
+                System.Diagnostics.Debug.WriteLine($"[PodeTrocarDeLoja]: {ex.Message}");
+                return (false, "Nao foi possivel conferir a troca de loja: " + ex.Message);
             }
         }
 
@@ -413,38 +330,30 @@ namespace PdvPadaria.Services
         #region Métodos de Pull (Recebimento de cadastros e estoques da nuvem)
 
         /// <summary>
-        /// Puxa atualizações cadastrais do Supabase e atualiza a base SQLite local
+        /// Atualiza cadastros e reconstroi o saldo local a partir da projecao autoritativa
+        /// da nuvem mais os movimentos desta maquina que ainda nao receberam ACK.
+        /// O servidor aplica cada StockMovement.id uma unica vez; nao existe mais foto
+        /// absoluta enviada por um PC capaz de sobrescrever o saldo dos outros.
         /// </summary>
-        /// <param name="semearEstoqueDaNuvem">
-        /// Normalmente FALSO: a loja e dona do proprio estoque e o pull nunca reescreve a
-        /// coluna de saldo (senao a venda offline "voltava" a cada ciclo). So a TROCA DE
-        /// LOJA passa verdadeiro: ali a maquina deixou de ser um caixa e virou outro, e
-        /// carregar o saldo da loja anterior seria escrever o estoque de uma loja na outra.
-        /// </param>
-        public async Task<bool> PullUpdatesAsync(string tenantId, string storeId, bool semearEstoqueDaNuvem = false)
+        public async Task<bool> PullUpdatesAsync(string tenantId, string storeId)
         {
             if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
             {
-                System.Diagnostics.Debug.WriteLine("[Pull Error]: Credenciais do Supabase ausentes no .env");
+                LastError = "Credenciais do Supabase ausentes.";
                 return false;
             }
 
             try
             {
-                // 1. Prepara as tasks em paralelo para performance máxima de rede
-                var categoriesTask = GetFromSupabaseAsync<Category>($"Category?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
-                // Puxa TODOS os produtos (ativos e inativos). O flag Active é propagado para o
-                // SQLite local, então um produto desativado na nuvem (excluir_produto / dashboard)
-                // vira Active=false aqui e some das telas que filtram por Active. Isso dá o
-                // "apaguei na web → sumiu no PDV" sem hard delete (preserva FK das vendas locais).
-                var productsTask = GetFromSupabaseAsync<Product>($"Product?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
-                var storeProductsTask = GetFromSupabaseAsync<StoreProductDto>($"StoreProduct?storeId=eq.{Uri.EscapeDataString(storeId)}");
-                var breadConfigsTask = GetFromSupabaseAsync<BreadConfig>($"BreadConfig?storeId=eq.{Uri.EscapeDataString(storeId)}&active=eq.true");
+                var categoriesTask = GetFromSupabaseAsync<Category>(
+                    $"Category?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
+                var productsTask = GetFromSupabaseAsync<Product>(
+                    $"Product?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
+                var storeProductsTask = GetFromSupabaseAsync<StoreProductDto>(
+                    $"StoreProduct?storeId=eq.{Uri.EscapeDataString(storeId)}");
+                var breadConfigsTask = GetFromSupabaseAsync<BreadConfig>(
+                    $"BreadConfig?storeId=eq.{Uri.EscapeDataString(storeId)}&active=eq.true");
 
-                // Aguarda a conclusão simultânea de todas as tarefas de rede.
-                // Usuários NÃO são mais puxados: o login virou server-side (RPC login_caixa)
-                // e a anon key não tem leitura na tabela User. O login offline passa a
-                // depender do admin semeado localmente e dos operadores que já logaram online.
                 await Task.WhenAll(categoriesTask, productsTask, storeProductsTask, breadConfigsTask);
 
                 var categories = await categoriesTask;
@@ -452,94 +361,61 @@ namespace PdvPadaria.Services
                 var storeProducts = await storeProductsTask;
                 var breadConfigs = await breadConfigsTask;
 
-                // Se a consulta crítica de produtos falhar por rede, cancela para não salvar dados incompletos
-                if (products == null)
+                if (products == null || storeProducts == null || breadConfigs == null)
                 {
-                    System.Diagnostics.Debug.WriteLine("[Pull Error]: Falha ao carregar a tabela de produtos da nuvem.");
+                    LastError = "Falha ao carregar cadastro ou estoque da loja.";
                     return false;
                 }
 
-                // 2. Mapa de estoque da nuvem — usado SOMENTE para semear produtos novos.
-                //    A loja é a dona do próprio estoque: produto que já existe localmente
-                //    NÃO tem o estoque sobrescrito pela nuvem (senão a venda offline "voltava"
-                //    a cada pull). A aplicação real desse mapa acontece na transação abaixo.
-                var stockMap = (storeProducts ?? new List<StoreProductDto>())
+                var stockMap = storeProducts
                     .GroupBy(sp => sp.ProductId)
                     .ToDictionary(g => g.Key, g => g.First());
 
-                // 3. Insere/Atualiza os cadastros locais de forma transacional e atômica
+                // A mesma transacao que le a fila tambem troca a base do estoque. Uma venda
+                // concorrente fica inteira antes ou depois dela, nunca perdida no meio.
                 _dbConnection.RunInTransaction(() =>
                 {
-                    // Sincroniza Categorias
+                    var deltasPendentes = _dbConnection.Query<StockMovement>(
+                            "SELECT * FROM StockMovement WHERE IsSynced = 0 AND StoreId = ?",
+                            storeId)
+                        .GroupBy(m => m.ProductId)
+                        .ToDictionary(g => g.Key, g => g.Sum(DeltaDoMovimento));
+
                     if (categories != null)
                     {
                         foreach (var cat in categories)
-                        {
                             _dbConnection.InsertOrReplace(cat);
-                        }
                     }
 
-                    // Sincroniza Produtos. O ESTOQUE é tratado à parte para a loja ser a fonte da verdade:
-                    //  - produto JÁ existente: atualiza só os campos de CADASTRO (nome, preço, etc.) via
-                    //    UPDATE seletivo — NUNCA reescreve a coluna de estoque (elimina a corrida com a
-                    //    venda que rodava read-modify-write numa conexão separada);
-                    //  - produto NOVO: insere semeando o estoque com o valor da nuvem desta loja.
-                    if (products != null)
+                    foreach (var prod in products)
                     {
-                        foreach (var prod in products)
+                        double quantidade = stockMap.TryGetValue(prod.Id, out var saldo)
+                            ? saldo.Quantity
+                            : 0;
+                        double minimo = saldo?.MinStock ?? 0;
+                        if (deltasPendentes.TryGetValue(prod.Id, out var pendente))
+                            quantidade += pendente;
+
+                        var existing = _dbConnection.Find<Product>(prod.Id);
+                        if (existing != null)
                         {
-                            var existing = _dbConnection.Find<Product>(prod.Id);
-                            if (existing != null)
-                            {
-                                _dbConnection.Execute(
-                                    "UPDATE Product SET Name=?, Barcode=?, PriceSale=?, PriceCost=?, Type=?, " +
-                                    "UnitMeasure=?, Active=?, ImageUrl=?, CategoryId=?, TenantId=?, UpdatedAt=? WHERE Id=?",
-                                    prod.Name, prod.Barcode, prod.PriceSale, prod.PriceCost, prod.Type,
-                                    prod.UnitMeasure, prod.Active, prod.ImageUrl, prod.CategoryId, prod.TenantId,
-                                    DateTime.Now, prod.Id);
-
-                                // Troca de loja: o saldo tem que vir do estoque da loja NOVA.
-                                if (semearEstoqueDaNuvem)
-                                {
-                                    double qtd = 0, min = 0;
-                                    if (stockMap.TryGetValue(prod.Id, out var spTroca))
-                                    {
-                                        qtd = spTroca.Quantity;
-                                        min = spTroca.MinStock;
-                                    }
-                                    _dbConnection.Execute(
-                                        "UPDATE Product SET LocalStockQuantity=?, MinStock=? WHERE Id=?",
-                                        qtd, min, prod.Id);
-                                }
-                            }
-                            else
-                            {
-                                // Produto novo que já chega inativo da nuvem = foi excluído antes
-                                // mesmo de existir aqui. Não insere (evita poluir a base local).
-                                if (!prod.Active) continue;
-
-                                if (stockMap.TryGetValue(prod.Id, out var sp))
-                                {
-                                    prod.LocalStockQuantity = sp.Quantity;
-                                    prod.MinStock = sp.MinStock;
-                                }
-                                else
-                                {
-                                    prod.LocalStockQuantity = 0;
-                                    prod.MinStock = 0;
-                                }
-                                _dbConnection.Insert(prod);
-                            }
+                            _dbConnection.Execute(
+                                "UPDATE Product SET Name=?, Barcode=?, PriceSale=?, PriceCost=?, Type=?, " +
+                                "UnitMeasure=?, Active=?, ImageUrl=?, CategoryId=?, TenantId=?, UpdatedAt=?, " +
+                                "LocalStockQuantity=?, MinStock=? WHERE Id=?",
+                                prod.Name, prod.Barcode, prod.PriceSale, prod.PriceCost, prod.Type,
+                                prod.UnitMeasure, prod.Active, prod.ImageUrl, prod.CategoryId, prod.TenantId,
+                                DateTime.Now, quantidade, minimo, prod.Id);
+                        }
+                        else if (prod.Active)
+                        {
+                            prod.LocalStockQuantity = quantidade;
+                            prod.MinStock = minimo;
+                            _dbConnection.Insert(prod);
                         }
                     }
 
-                    // Sincroniza Regras de Preço de Pão.
-                    // A nuvem é a dona da tabela de faixas. Antes só inseríamos a linha da nuvem,
-                    // que passava a conviver com a semente local "config-pao-test" criada no
-                    // primeiro boot. Como a leitura pegava uma linha qualquer, o caixa podia
-                    // continuar com a faixa antiga depois de o dono mudar o preço no painel.
-                    // Apagar as outras linhas desta loja deixa uma só, e ela é a da nuvem.
-                    if (breadConfigs != null && breadConfigs.Count > 0)
+                    if (breadConfigs.Count > 0)
                     {
                         _dbConnection.Execute(
                             "DELETE FROM BreadConfig WHERE StoreId = ? AND Id <> ?",
@@ -548,117 +424,24 @@ namespace PdvPadaria.Services
                     }
                 });
 
-                // 4. Aplica ajustes de estoque feitos pelo DONO para esta loja (controle remoto).
-                //    Cada ajuste é aplicado UMA única vez — não reverte venda offline a cada pull.
-                await ApplyOwnerAdjustmentsAsync(storeId);
-
                 return true;
             }
             catch (Exception ex)
             {
+                LastError = ex.Message;
                 System.Diagnostics.Debug.WriteLine($"[Pull Error]: {ex.Message}");
                 return false;
             }
         }
 
-        /// <summary>
-        /// Baixa os ajustes de estoque que o dono lançou na nuvem para ESTA loja e os aplica
-        /// no estoque local, marcando cada um como aplicado (idempotente pelo id do ajuste).
-        /// </summary>
-        private async Task ApplyOwnerAdjustmentsAsync(string storeId)
+        private static double DeltaDoMovimento(StockMovement movimento)
         {
-            try
-            {
-                var ajustes = await GetFromSupabaseAsync<OwnerStockAdjustmentDto>(
-                    $"OwnerStockAdjustment?storeId=eq.{Uri.EscapeDataString(storeId)}&order=createdAt.asc");
-                if (ajustes == null || ajustes.Count == 0) return;
-
-                _dbConnection.RunInTransaction(() =>
-                {
-                    foreach (var aj in ajustes)
-                    {
-                        if (string.IsNullOrEmpty(aj.Id)) continue;
-                        // Já aplicado antes? pula (uma vez só).
-                        if (_dbConnection.Find<AppliedOwnerAdjustment>(aj.Id) != null) continue;
-
-                        var prod = _dbConnection.Find<Product>(aj.ProductId);
-                        if (prod != null)
-                        {
-                            // O número lançado pelo dono vale para o INSTANTE em que ele lançou.
-                            // Se a loja estava offline e vendeu depois disso, essas vendas
-                            // precisam continuar descontadas — senão o ajuste "devolveria" ao
-                            // estoque itens que já saíram, quebrando a conferência de caixa.
-                            // Vendas anteriores ao lançamento NÃO são descontadas: elas já
-                            // estavam refletidas no número que o dono informou.
-                            double vendidoDepois = 0;
-                            try
-                            {
-                                vendidoDepois = _dbConnection.ExecuteScalar<double>(
-                                    @"SELECT COALESCE(SUM(si.Quantity), 0)
-                                        FROM SaleItem si
-                                        JOIN Sale s ON s.Id = si.SaleId
-                                       WHERE si.ProductId = ?
-                                         AND s.PaymentStatus = 'APROVADO'
-                                         AND s.SaleDate > ?",
-                                    aj.ProductId, aj.CreatedAt);
-                            }
-                            catch (Exception exVendas)
-                            {
-                                // Sem conseguir medir, é mais seguro aplicar o número puro do
-                                // que travar o ajuste inteiro.
-                                System.Diagnostics.Debug.WriteLine($"[Ajuste: soma de vendas falhou]: {exVendas.Message}");
-                            }
-
-                            double saldoAnterior = prod.LocalStockQuantity;
-                            double saldoFinal = Math.Max(0, aj.Quantity - vendidoDepois);
-
-                            if (aj.MinStock.HasValue)
-                                _dbConnection.Execute(
-                                    "UPDATE Product SET LocalStockQuantity=?, MinStock=? WHERE Id=?",
-                                    saldoFinal, aj.MinStock.Value, aj.ProductId);
-                            else
-                                _dbConnection.Execute(
-                                    "UPDATE Product SET LocalStockQuantity=? WHERE Id=?",
-                                    saldoFinal, aj.ProductId);
-
-                            // Registra a entrada no histórico LOCAL. Antes o ajuste do dono
-                            // mudava o estoque calado: a loja recebia 275 pães e o caixa não
-                            // guardava nenhum registro de que entraram — justo o começo da
-                            // conferência de pão enviado x vendido.
-                            //
-                            // IsSynced=true de propósito: este movimento espelha um evento que
-                            // NASCEU na nuvem, e lá ele já existe (ajustar_estoque grava o
-                            // StockMovement, e o lançamento em lote grava o OwnerStockAdjustment).
-                            // Empurrá-lo de volta duplicaria a mesma entrada no histórico do dono.
-                            if (Math.Abs(saldoFinal - saldoAnterior) > 0.0001)
-                            {
-                                _dbConnection.Insert(new StockMovement
-                                {
-                                    Id = Guid.NewGuid().ToString(),
-                                    ProductId = aj.ProductId,
-                                    StoreId = storeId,
-                                    UserId = aj.CreatedBy ?? string.Empty,
-                                    TenantId = EnvService.Get("TENANT_ID"),
-                                    Type = saldoFinal >= saldoAnterior ? "ENTRADA" : "SAIDA",
-                                    Quantity = Math.Abs(saldoFinal - saldoAnterior),
-                                    Reason = "AJUSTE_DONO",
-                                    CreatedAt = aj.CreatedAt,
-                                    IsSynced = true,
-                                    SyncedAt = DateTime.Now,
-                                    BalanceBefore = saldoAnterior,
-                                    BalanceAfter = saldoFinal
-                                });
-                            }
-                        }
-
-                        _dbConnection.Insert(new AppliedOwnerAdjustment { Id = aj.Id });
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ApplyOwnerAdjustments Error]: {ex.Message}");
-            }
+            double quantidade = Math.Abs(movimento.Quantity);
+            if (string.Equals(movimento.Type, "ENTRADA", StringComparison.OrdinalIgnoreCase))
+                return quantidade;
+            if (string.Equals(movimento.Type, "SAIDA", StringComparison.OrdinalIgnoreCase))
+                return -quantidade;
+            return 0;
         }
 
         // Método genérico para fazer GET diretamente na API REST do Supabase
@@ -711,20 +494,6 @@ namespace PdvPadaria.Services
         public string StoreId { get; set; } = string.Empty;
         public double Quantity { get; set; }
         public double MinStock { get; set; }
-    }
-
-    // Ajuste de estoque que o DONO fez para esta loja na nuvem; aplicado uma única vez.
-    public class OwnerStockAdjustmentDto
-    {
-        public string Id { get; set; } = string.Empty;
-        public string ProductId { get; set; } = string.Empty;
-        public double Quantity { get; set; }
-        public double? MinStock { get; set; }
-        // Momento em que o dono lançou o número. É o que permite descontar apenas as
-        // vendas ocorridas DEPOIS do lançamento (ver ApplyOwnerAdjustmentsAsync).
-        public DateTime CreatedAt { get; set; }
-        // Quem lançou, para o movimento local sair com autor em vez de anônimo.
-        public string? CreatedBy { get; set; }
     }
 
     #endregion

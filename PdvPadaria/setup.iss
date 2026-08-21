@@ -21,7 +21,7 @@
 [Setup]
 AppId={{C6F2A3F4-5987-45CC-AB1B-7AA8D4D4A994}
 AppName=PDV - Padaria Venâncio
-AppVersion=1.1.6
+AppVersion=1.1.7
 AppPublisher=Padaria Venâncio
 AppPublisherURL=https://www.padariavenancio.com.br
 DefaultDirName={autopf}\PDV Padaria Venancio
@@ -61,7 +61,7 @@ Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\PdvPadaria.exe"; DestDir: "
 Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\*"; DestDir: "{app}"; Excludes: ".env"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Modelo em branco. "onlyifdoesntexist" garante que a atualização NUNCA sobrescreve a
 ; configuração da loja; numa instalação nova ele vira o .env a ser preenchido.
-Source: "d:\PDV\PdvPadaria\.env.exemplo"; DestDir: "{app}"; DestName: ".env"; Flags: onlyifdoesntexist
+Source: "d:\PDV\PdvPadaria\.env.exemplo"; DestDir: "{app}"; DestName: ".env"; Flags: onlyifdoesntexist uninsneveruninstall
 Source: "d:\PDV\PdvPadaria\.env.exemplo"; DestDir: "{app}"; Flags: ignoreversion
 ; Nota: Ajuste os caminhos acima se utilizar a publicação com RID específico (ex: \publish\win-x64\)
 #ifdef OFFLINE
@@ -89,7 +89,7 @@ Name: "{autodesktop}\PDV - Padaria Venâncio"; Filename: "{app}\PdvPadaria.exe"
 Filename: "{app}\PdvPadaria.exe"; Description: "{cm:LaunchProgram,PDV - Padaria Venâncio}"; Flags: nowait postinstall skipifsilent
 ; Auto-update silencioso (UpdateService.cs chama Setup com /VERYSILENT): sem wizard, então a
 ; entrada acima nunca roda (skipifsilent). Esta reabre o PDV sozinho ao final da atualização.
-Filename: "{app}\PdvPadaria.exe"; Flags: nowait; Check: ShouldRelaunchSilently
+Filename: "{app}\PdvPadaria.exe"; Flags: nowait runasoriginaluser; Check: ShouldRelaunchSilently
 
 [Code]
 const

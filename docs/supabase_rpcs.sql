@@ -916,3 +916,518 @@ $$;
 --     from caixa_token c join "Store" s on s.id = c."storeId"
 --    order by s.name, c."createdAt";
 -- ============================================================
+
+-- ============================================================
+-- IMPLEMENTACAO EXECUTAVEL DA IDENTIDADE POR MAQUINA
+-- App 1.1.7 / 21-08-2026
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.caixa_token (
+  id          TEXT PRIMARY KEY,
+  "storeId"   TEXT NOT NULL REFERENCES public."Store"(id),
+  "tenantId"  TEXT NOT NULL,
+  token_hash  TEXT NOT NULL,
+  terminal    TEXT,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "revokedAt" TIMESTAMPTZ
+);
+
+ALTER TABLE public.caixa_token ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.caixa_token FROM PUBLIC, anon, authenticated;
+
+ALTER TABLE public.store_sync_secret
+  ADD COLUMN IF NOT EXISTS token_hash_prev TEXT;
+REVOKE ALL ON TABLE public.store_sync_secret FROM PUBLIC, anon, authenticated;
+
+-- Rotacionar o token legado sem preencher token_hash_prev derrubou todas as
+-- maquinas antigas de uma vez. O trigger torna a preservacao automatica.
+CREATE OR REPLACE FUNCTION public.preservar_token_anterior()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  IF NEW.token_hash IS DISTINCT FROM OLD.token_hash THEN
+    NEW.token_hash_prev := OLD.token_hash;
+    NEW."updatedAt" := now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS store_sync_secret_preserva_anterior
+  ON public.store_sync_secret;
+CREATE TRIGGER store_sync_secret_preserva_anterior
+BEFORE UPDATE OF token_hash ON public.store_sync_secret
+FOR EACH ROW EXECUTE FUNCTION public.preservar_token_anterior();
+
+REVOKE ALL ON FUNCTION public.preservar_token_anterior()
+  FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.loja_do_token(p_token TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_id    TEXT;
+  v_seg   TEXT;
+  v_store TEXT;
+BEGIN
+  IF p_token IS NULL OR p_token = '' THEN
+    RETURN NULL;
+  END IF;
+
+  IF position('.' IN p_token) > 0 THEN
+    v_id  := split_part(p_token, '.', 1);
+    v_seg := split_part(p_token, '.', 2);
+
+    SELECT c."storeId" INTO v_store
+      FROM public.caixa_token c
+      JOIN public."Store" s
+        ON s.id = c."storeId"
+       AND s."tenantId" = c."tenantId"
+       AND s.active = true
+     WHERE c.id = v_id
+       AND c."revokedAt" IS NULL
+       AND c.token_hash = extensions.crypt(v_seg, c.token_hash)
+     LIMIT 1;
+
+    RETURN v_store;
+  END IF;
+
+  SELECT s."storeId" INTO v_store
+    FROM public.store_sync_secret s
+   WHERE s.token_hash = extensions.crypt(p_token, s.token_hash)
+      OR (s.token_hash_prev IS NOT NULL
+          AND s.token_hash_prev = extensions.crypt(p_token, s.token_hash_prev))
+   LIMIT 1;
+
+  RETURN v_store;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.loja_do_token(TEXT)
+  FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION public.loja_do_token(TEXT) TO anon;
+
+-- Os dois ultimos parametros tem default para clientes 1.1.6 continuarem
+-- chamando a RPC com email, senha e terminal ate receberem a atualizacao.
+DROP FUNCTION IF EXISTS public.registrar_caixa(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.registrar_caixa(
+  p_email       TEXT,
+  p_senha       TEXT,
+  p_terminal    TEXT DEFAULT NULL,
+  p_store_id    TEXT DEFAULT NULL,
+  p_token_atual TEXT DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id        TEXT;
+  v_user_store_id  TEXT;
+  v_tenant_id      TEXT;
+  v_role           TEXT;
+  v_store_id       TEXT;
+  v_token_id       TEXT;
+  v_token_secret   TEXT;
+  v_token_store    TEXT;
+  v_token_tenant   TEXT;
+  v_id             TEXT;
+  v_segredo        TEXT;
+BEGIN
+  SELECT u.id, u."storeId", u."tenantId", u.role
+    INTO v_user_id, v_user_store_id, v_tenant_id, v_role
+    FROM public."User" u
+    JOIN public."Tenant" t
+      ON t.id = u."tenantId" AND t.active = true
+   WHERE u.email = p_email
+     AND u.active = true
+     AND CASE
+       WHEN u.password LIKE '$2a$%'
+         OR u.password LIKE '$2b$%'
+         OR u.password LIKE '$2y$%'
+       THEN u.password = extensions.crypt(p_senha, u.password)
+       ELSE u.password = p_senha
+     END
+   LIMIT 1;
+
+  IF v_user_id IS NULL THEN
+    RETURN json_build_object('error', 'credenciais_invalidas');
+  END IF;
+
+  -- Valida o token inteiro (id + segredo), inclusive se ja foi revogado. Isso
+  -- permite ao DONO renovar a mesma maquina sem aceitar um id inventado.
+  IF position('.' IN coalesce(p_token_atual, '')) > 0 THEN
+    v_token_id     := split_part(p_token_atual, '.', 1);
+    v_token_secret := split_part(p_token_atual, '.', 2);
+
+    SELECT c."storeId", c."tenantId"
+      INTO v_token_store, v_token_tenant
+      FROM public.caixa_token c
+      JOIN public."Store" s
+        ON s.id = c."storeId"
+       AND s."tenantId" = c."tenantId"
+       AND s.active = true
+     WHERE c.id = v_token_id
+       AND c.token_hash = extensions.crypt(v_token_secret, c.token_hash)
+     LIMIT 1;
+
+    IF v_token_tenant IS DISTINCT FROM v_tenant_id THEN
+      v_token_id := NULL;
+      v_token_store := NULL;
+    END IF;
+  END IF;
+
+  IF v_user_store_id IS NOT NULL THEN
+    -- Usuario de loja nunca escolhe outra loja pelo payload.
+    SELECT s.id INTO v_store_id
+      FROM public."Store" s
+     WHERE s.id = v_user_store_id
+       AND s."tenantId" = v_tenant_id
+       AND s.active = true;
+
+    IF v_store_id IS NULL THEN
+      RETURN json_build_object('error', 'loja_invalida');
+    END IF;
+  ELSE
+    IF v_role <> 'DONO' THEN
+      RETURN json_build_object('error', 'usuario_sem_loja');
+    END IF;
+
+    -- DONO mantem a loja da propria maquina. Para token legado ja perdido,
+    -- usa somente a loja confirmada e enviada pelo app, validada no tenant.
+    v_store_id := v_token_store;
+    IF v_store_id IS NULL AND nullif(p_store_id, '') IS NOT NULL THEN
+      SELECT s.id INTO v_store_id
+        FROM public."Store" s
+       WHERE s.id = p_store_id
+         AND s."tenantId" = v_tenant_id
+         AND s.active = true;
+    END IF;
+
+    IF v_store_id IS NULL THEN
+      RETURN json_build_object('error', 'loja_nao_informada');
+    END IF;
+  END IF;
+
+  v_id      := gen_random_uuid()::TEXT;
+  v_segredo := encode(extensions.gen_random_bytes(24), 'hex');
+
+  INSERT INTO public.caixa_token
+    (id, "storeId", "tenantId", token_hash, terminal)
+  VALUES
+    (v_id, v_store_id, v_tenant_id,
+     extensions.crypt(v_segredo, extensions.gen_salt('bf', 6)),
+     nullif(left(trim(coalesce(p_terminal, '')), 100), ''));
+
+  IF v_token_id IS NOT NULL THEN
+    UPDATE public.caixa_token
+       SET "revokedAt" = coalesce("revokedAt", now())
+     WHERE id = v_token_id
+       AND "tenantId" = v_tenant_id;
+  END IF;
+
+  RETURN json_build_object(
+    'storeId',  v_store_id,
+    'tenantId', v_tenant_id,
+    'token',    v_id || '.' || v_segredo
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.registrar_caixa(TEXT, TEXT, TEXT, TEXT, TEXT)
+  FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION public.registrar_caixa(TEXT, TEXT, TEXT, TEXT, TEXT)
+  TO anon;
+
+-- RASCUNHO FUTURO, NAO ATIVAR NA RELEASE 1.1.7.
+-- O corte exige uma versao-ponte e drenagem de todos os clientes 1.1.6 por loja;
+-- misturar snapshot legado e delta de ledger pode corromper o estoque.
+-- CORTE PARA O LEDGER: StoreProduct existente vira a base, sem tentar reproduzir
+-- movimentos antigos (as fotos legadas ja se contradizem). Apos o deploy, cada
+-- StockMovement.id novo altera essa base exatamente uma vez. A base precisa de uma
+-- conferencia fisica unica; nenhuma heuristica consegue reconstruir o passado.
+--
+-- Nao deixa um payload copiado de outra maquina alterar ids que ja pertencem a
+-- outra loja/tenant. O token continua sendo a unica fonte de storeId/tenantId.
+CREATE OR REPLACE FUNCTION public.push_vendas(p_payload JSONB, p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_store    TEXT;
+  v_tenant   TEXT;
+  v_fallback TEXT;
+  v_sales    INT := 0;
+  v_items    INT := 0;
+  v_moves    INT := 0;
+BEGIN
+  v_store := public.loja_do_token(p_token);
+
+  IF v_store IS NULL THEN
+    RETURN jsonb_build_object('error', 'invalid_token');
+  END IF;
+
+  SELECT "tenantId" INTO v_tenant
+    FROM public."Store"
+   WHERE id = v_store AND active = true;
+
+  IF v_tenant IS NULL THEN
+    RETURN jsonb_build_object('error', 'invalid_store');
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(coalesce(p_payload->'sales', '[]'::JSONB)) e
+      JOIN public."Sale" s ON s.id = e->>'id'
+     WHERE s."storeId" <> v_store OR s."tenantId" <> v_tenant
+  ) OR EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(coalesce(p_payload->'movements', '[]'::JSONB)) e
+      JOIN public."StockMovement" m ON m.id = e->>'id'
+     WHERE m."storeId" <> v_store OR m."tenantId" <> v_tenant
+  ) THEN
+    RETURN jsonb_build_object('error', 'invalid_scope');
+  END IF;
+
+  -- Um id repetido dentro do mesmo lote tornaria o resultado dependente da ordem.
+  -- Rejeita antes de qualquer INSERT; retries entre lotes continuam idempotentes.
+  IF EXISTS (
+    SELECT 1
+      FROM (
+        SELECT 'sale' AS kind, e->>'id' AS id
+          FROM jsonb_array_elements(coalesce(p_payload->'sales', '[]'::JSONB)) e
+        UNION ALL
+        SELECT 'item', e->>'id'
+          FROM jsonb_array_elements(coalesce(p_payload->'items', '[]'::JSONB)) e
+        UNION ALL
+        SELECT 'movement', e->>'id'
+          FROM jsonb_array_elements(coalesce(p_payload->'movements', '[]'::JSONB)) e
+      ) ids
+     WHERE nullif(id, '') IS NULL
+  ) OR EXISTS (
+    SELECT 1
+      FROM (
+        SELECT 'sale' AS kind, e->>'id' AS id
+          FROM jsonb_array_elements(coalesce(p_payload->'sales', '[]'::JSONB)) e
+        UNION ALL
+        SELECT 'item', e->>'id'
+          FROM jsonb_array_elements(coalesce(p_payload->'items', '[]'::JSONB)) e
+        UNION ALL
+        SELECT 'movement', e->>'id'
+          FROM jsonb_array_elements(coalesce(p_payload->'movements', '[]'::JSONB)) e
+      ) ids
+     GROUP BY kind, id
+    HAVING count(*) > 1
+  ) THEN
+    RETURN jsonb_build_object('error', 'invalid_payload');
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(coalesce(p_payload->'movements', '[]'::JSONB)) e
+     WHERE CASE
+       WHEN upper(coalesce(e->>'type', '')) NOT IN ('ENTRADA', 'SAIDA', 'AJUSTE')
+         THEN true
+       WHEN coalesce(e->>'quantity', '') !~
+            '^[+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$'
+         THEN true
+       ELSE (e->>'quantity')::DOUBLE PRECISION < 0
+     END
+  ) THEN
+    RETURN jsonb_build_object('error', 'invalid_payload');
+  END IF;
+
+  -- Recusa o lote inteiro em vez de descartar silenciosamente item/movimento
+  -- invalido. O cliente so marca a fila como sincronizada quando nao ha error.
+  IF EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(coalesce(p_payload->'items', '[]'::JSONB)) e
+     WHERE NOT EXISTS (
+             SELECT 1 FROM public."Product" p
+              WHERE p.id = e->>'productId' AND p."tenantId" = v_tenant
+           )
+        OR NOT (
+             EXISTS (
+               SELECT 1 FROM public."Sale" s
+                WHERE s.id = e->>'saleId'
+                  AND s."storeId" = v_store
+                  AND s."tenantId" = v_tenant
+             )
+             OR EXISTS (
+               SELECT 1
+                 FROM jsonb_array_elements(coalesce(p_payload->'sales', '[]'::JSONB)) venda
+                WHERE venda->>'id' = e->>'saleId'
+             )
+           )
+        OR EXISTS (
+             SELECT 1
+               FROM public."SaleItem" i
+               JOIN public."Sale" s ON s.id = i."saleId"
+              WHERE i.id = e->>'id'
+                AND (s."storeId" <> v_store OR s."tenantId" <> v_tenant)
+           )
+  ) OR EXISTS (
+    SELECT 1
+      FROM jsonb_array_elements(coalesce(p_payload->'movements', '[]'::JSONB)) e
+     WHERE NOT EXISTS (
+             SELECT 1 FROM public."Product" p
+              WHERE p.id = e->>'productId' AND p."tenantId" = v_tenant
+           )
+        OR (
+             nullif(e->>'saleId', '') IS NOT NULL
+             AND NOT (
+               EXISTS (
+                 SELECT 1 FROM public."Sale" s
+                  WHERE s.id = e->>'saleId'
+                    AND s."storeId" = v_store
+                    AND s."tenantId" = v_tenant
+               )
+               OR EXISTS (
+                 SELECT 1
+                   FROM jsonb_array_elements(coalesce(p_payload->'sales', '[]'::JSONB)) venda
+                  WHERE venda->>'id' = e->>'saleId'
+               )
+             )
+           )
+  ) THEN
+    RETURN jsonb_build_object('error', 'invalid_scope');
+  END IF;
+
+  SELECT id INTO v_fallback
+    FROM public."User"
+   WHERE "tenantId" = v_tenant AND active = true
+   ORDER BY CASE WHEN role = 'DONO' THEN 0 WHEN role = 'GERENTE' THEN 1 ELSE 2 END
+   LIMIT 1;
+
+  INSERT INTO public."Sale"
+  SELECT (jsonb_populate_record(NULL::public."Sale", e || jsonb_build_object(
+            'storeId', v_store,
+            'tenantId', v_tenant,
+            'userId', coalesce((
+              SELECT u.id FROM public."User" u
+               WHERE u.id = e->>'userId'
+                 AND u."tenantId" = v_tenant
+                 AND (u."storeId" IS NULL OR u."storeId" = v_store)
+            ), v_fallback)
+          ))).*
+    FROM jsonb_array_elements(coalesce(p_payload->'sales', '[]'::JSONB)) e
+  ON CONFLICT (id) DO UPDATE SET
+    "isSynced" = excluded."isSynced",
+    "syncedAt" = excluded."syncedAt",
+    "paymentStatus" = excluded."paymentStatus",
+    subtotal = excluded.subtotal,
+    discount = excluded.discount,
+    total = excluded.total
+  WHERE "Sale"."storeId" = v_store
+    AND "Sale"."tenantId" = v_tenant;
+  GET DIAGNOSTICS v_sales = ROW_COUNT;
+
+  INSERT INTO public."SaleItem"
+  SELECT (jsonb_populate_record(NULL::public."SaleItem", e)).*
+    FROM jsonb_array_elements(coalesce(p_payload->'items', '[]'::JSONB)) e
+   WHERE EXISTS (
+           SELECT 1 FROM public."Product" p
+            WHERE p.id = e->>'productId' AND p."tenantId" = v_tenant
+         )
+     AND EXISTS (
+           SELECT 1 FROM public."Sale" s
+            WHERE s.id = e->>'saleId'
+              AND s."storeId" = v_store
+              AND s."tenantId" = v_tenant
+         )
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS v_items = ROW_COUNT;
+
+  -- StockMovement.id e o ledger: somente o INSERT realmente novo gera delta.
+  -- Uma resposta perdida pode ser repetida sem baixar o estoque outra vez.
+  WITH inserted AS (
+    INSERT INTO public."StockMovement"
+    SELECT (jsonb_populate_record(NULL::public."StockMovement", e || jsonb_build_object(
+              'storeId', v_store,
+              'tenantId', v_tenant,
+              'isSynced', true,
+              'syncedAt', now(),
+              'userId', coalesce((
+                SELECT u.id FROM public."User" u
+                 WHERE u.id = e->>'userId'
+                   AND u."tenantId" = v_tenant
+                   AND (u."storeId" IS NULL OR u."storeId" = v_store)
+              ), v_fallback)
+            ))).*
+      FROM jsonb_array_elements(coalesce(p_payload->'movements', '[]'::JSONB)) e
+     WHERE EXISTS (
+             SELECT 1 FROM public."Product" p
+              WHERE p.id = e->>'productId' AND p."tenantId" = v_tenant
+           )
+       AND (
+         nullif(e->>'saleId', '') IS NULL OR EXISTS (
+           SELECT 1 FROM public."Sale" s
+            WHERE s.id = e->>'saleId'
+              AND s."storeId" = v_store
+              AND s."tenantId" = v_tenant
+         )
+       )
+    ON CONFLICT (id) DO NOTHING
+    RETURNING "productId", type, quantity
+  ), deltas AS (
+    SELECT "productId",
+           sum(CASE upper(type)
+                 WHEN 'ENTRADA' THEN abs(quantity)
+                 WHEN 'SAIDA'   THEN -abs(quantity)
+                 ELSE 0
+               END) AS quantity
+      FROM inserted
+     GROUP BY "productId"
+  ), projected AS (
+    INSERT INTO public."StoreProduct" AS stock
+      (id, "productId", "storeId", quantity, "minStock", "updatedAt")
+    SELECT gen_random_uuid()::TEXT, "productId", v_store, quantity, 0, now()
+      FROM deltas
+     WHERE quantity <> 0
+     ORDER BY "productId"
+    ON CONFLICT ("storeId", "productId") DO UPDATE
+      SET quantity = stock.quantity + excluded.quantity,
+          "updatedAt" = now()
+    RETURNING 1
+  )
+  SELECT count(*) INTO v_moves FROM inserted;
+
+  RETURN jsonb_build_object(
+    'sales', v_sales, 'items', v_items, 'movements', v_moves, 'mode', 'ledger'
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.push_vendas(JSONB, TEXT)
+  FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION public.push_vendas(JSONB, TEXT) TO anon;
+
+-- Clientes antigos ainda chamam push_estoque. Autentica e responde sucesso, mas
+-- nao aceita mais que uma foto absoluta de um computador sobrescreva o ledger.
+CREATE OR REPLACE FUNCTION public.push_estoque(p_payload JSONB, p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF public.loja_do_token(p_token) IS NULL THEN
+    RETURN jsonb_build_object('error', 'invalid_token', 'stock', 0);
+  END IF;
+
+  RETURN jsonb_build_object('stock', 0, 'mode', 'ledger');
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.push_estoque(JSONB, TEXT)
+  FROM PUBLIC, authenticated;
+GRANT EXECUTE ON FUNCTION public.push_estoque(JSONB, TEXT) TO anon;

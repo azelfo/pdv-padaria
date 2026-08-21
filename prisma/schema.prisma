@@ -41,6 +41,7 @@ model Store {
   sales     Sale[]
   configs   BreadConfig[]
   movements StockMovement[]
+  caixaTokens CaixaToken[]
 }
 
 model User {
@@ -204,7 +205,23 @@ model OwnerStockAdjustment {
 /// estoque na nuvem (RPCs push_vendas / push_estoque). Guarda apenas o HASH do
 /// token — o valor em claro fica no .env da máquina da loja (STORE_SYNC_TOKEN).
 model store_sync_secret {
-  storeId    String   @id
+  storeId         String   @id
+  token_hash      String
+  token_hash_prev String?
+  updatedAt       DateTime @default(now())
+}
+
+/// Credencial individual de uma maquina. O segredo em claro so e devolvido
+/// uma vez por registrar_caixa; esta tabela guarda apenas o hash BCrypt.
+model CaixaToken {
+  id         String    @id
+  storeId    String
+  store      Store     @relation(fields: [storeId], references: [id])
+  tenantId   String
   token_hash String
-  updatedAt  DateTime @default(now())
+  terminal   String?
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+
+  @@map("caixa_token")
 }

@@ -55,92 +55,22 @@ namespace PdvPadaria.Services
                 await _database.CreateTableAsync<StockMovement>();
                 await _database.CreateTableAsync<AppliedOwnerAdjustment>();
 
-                // Obtém valores reais do .env com fallbacks de teste
-                string tenantId = EnvService.Get("TENANT_ID", "tenant-test");
-                string storeId = EnvService.Get("STORE_ID", "store-test");
-
-                // Seed inicial para garantir que o usuário dono consiga logar offline na primeira vez
-                var userCount = await _database.Table<User>().CountAsync();
-                if (userCount == 0)
-                {
-                    await _database.InsertAsync(new User
-                    {
-                        Id = "local-admin",
-                        Name = "Marcelo Dono",
-                        Email = "dono@padaria.com", // deve casar com o User do Supabase (login offline na 1ª vez)
-                        Password = PasswordHasher.Hash("123"), // hash BCrypt; troque a senha no 1o login
-                        Role = "DONO",
-                        TenantId = tenantId,
-                        StoreId = storeId,
-                        Active = true
-                    });
-                }
-
-                // Seed de Categoria
-                var catCount = await _database.Table<Category>().CountAsync();
-                if (catCount == 0)
-                {
-                    await _database.InsertAsync(new Category
-                    {
-                        Id = "cat-producao-propria",
-                        Name = "Produção Própria",
-                        TenantId = tenantId
-                    });
-                }
-
-
-
-                var paoCarioca = await _database.Table<Product>().Where(p => p.Id == "prod-pao-carioca").FirstOrDefaultAsync();
-                if (paoCarioca == null)
-                {
-                    await _database.InsertAsync(new Product
-                    {
-                        Id = "prod-pao-carioca",
-                        Name = "Pão Carioca",
-                        Barcode = "100000000002",
-                        PriceSale = 50,
-                        PriceCost = 15,
-                        Type = "PAO_FRANCES",
-                        UnitMeasure = "UN",
-                        CategoryId = "cat-producao-propria",
-                        TenantId = tenantId,
-                        LocalStockQuantity = 0, // semente legada começa em 0; o estoque real vem da nuvem/contagem
-                        Active = true
-                    });
-                }
-
-                var paoMassaFina = await _database.Table<Product>().Where(p => p.Id == "prod-pao-massa-fina").FirstOrDefaultAsync();
-                if (paoMassaFina == null)
-                {
-                    await _database.InsertAsync(new Product
-                    {
-                        Id = "prod-pao-massa-fina",
-                        Name = "Pão Massa Fina",
-                        Barcode = "100000000003",
-                        PriceSale = 50,
-                        PriceCost = 15,
-                        Type = "PAO_FRANCES",
-                        UnitMeasure = "UN",
-                        CategoryId = "cat-producao-propria",
-                        TenantId = tenantId,
-                        LocalStockQuantity = 0, // semente legada começa em 0; o estoque real vem da nuvem/contagem
-                        Active = true
-                    });
-                }
-
-                // Seed do BreadConfig
-                var configCount = await _database.Table<BreadConfig>().CountAsync();
-                if (configCount == 0)
-                {
-                    await _database.InsertAsync(new BreadConfig
-                    {
-                        Id = "config-pao-test",
-                        StoreId = storeId,
-                        PriceUnit = 50,
-                        Brackets = "[{\"ate\": 50, \"qtd\": 1}, {\"ate\": 100, \"qtd\": 3}, {\"ate\": 150, \"qtd\": 4}, {\"ate\": 200, \"qtd\": 6}, {\"ate\": 250, \"qtd\": 7}, {\"ate\": 300, \"qtd\": 9}, {\"ate\": 500, \"qtd\": 15}, {\"ate\": 1000, \"qtd\": 30}]",
-                        Active = true
-                    });
-                }
+                // Versões antigas criavam dados de demonstração no banco real. Não
+                // apagamos as linhas, pois vendas antigas podem referenciá-las; apenas
+                // desativamos os IDs conhecidos e deixamos a nuvem fornecer dados reais.
+                await _database.ExecuteAsync(
+                    "UPDATE User SET Active = 0 WHERE Id = ? AND Email = ?",
+                    "local-admin", "dono@padaria.com");
+                await _database.ExecuteAsync(
+                    "UPDATE Product SET Active = 0 WHERE Id IN (?, ?)",
+                    "prod-pao-carioca", "prod-pao-massa-fina");
+                await _database.ExecuteAsync(
+                    "UPDATE BreadConfig SET Active = 0 WHERE Id = ?",
+                    "config-pao-test");
+                await _database.ExecuteAsync(
+                    "DELETE FROM Category WHERE Id = ? AND TenantId = ? " +
+                    "AND NOT EXISTS (SELECT 1 FROM Product WHERE CategoryId = ?)",
+                    "cat-producao-propria", "tenant-test", "cat-producao-propria");
             }
             catch (Exception ex)
             {
