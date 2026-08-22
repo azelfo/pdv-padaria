@@ -1,6 +1,6 @@
 {
-  "version": "1.1.7",
+  "version": "1.1.8",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "481438b196adc6cd7887f97cc4bab1300a2471e357bdbcb9450500c310cb2640",
-  "notes": "Corrige os acessos das lojas sem apagar historico. Tokens vencidos se renovam sozinhos no login online, inclusive quando o DONO entra na maquina, e o STORE_ID antigo deixa de gerar aviso falso. A troca de loja preserva vendas e historico e so termina depois de carregar os dados da loja correta. Nao e preciso desinstalar, limpar o computador nem editar arquivos."
+  "sha256": "48271cc100f56f90a6682db2c0f537f49072b579c5d25f1e3e96ee794b2c54c4",
+  "notes": "Reforco de seguranca na propria atualizacao. Antes, o caixa baixava o instalador e o executava sem conferir se era mesmo o arquivo publicado. Agora ele confere a impressao digital do arquivo antes de rodar qualquer coisa, e so aceita download vindo do endereco oficial do sistema - se nao bater, recusa e continua na versao atual, vendendo normalmente. Junto: ao sair do sistema, o caixa passa a descartar de vez os dados da sessao anterior. Antes, entrar com outro usuario sem fechar o programa podia reaproveitar a loja de quem estava logado antes, o que fazia o sistema se comportar de um jeito na primeira entrada e de outro na segunda. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
 }
