@@ -336,7 +336,7 @@ namespace PdvPadaria
             if (MessageBox.Show(msg, "Atualização disponível", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
                 return;
 
-            bool started = await Services.UpdateService.DownloadAndInstallAsync(info.Url);
+            bool started = await Services.UpdateService.DownloadAndInstallAsync(info);
             if (!started)
             {
                 MessageBox.Show("Não foi possível baixar a atualização agora. Tente novamente mais tarde.",

@@ -18,6 +18,12 @@ namespace PdvPadaria.Services
 
         [JsonProperty("notes")]
         public string Notes { get; set; } = string.Empty;
+
+        // Impressão digital SHA-256 do instalador. Sem ela o caixa não tem como
+        // saber se o que baixou é o que foi publicado — e ele executa o arquivo
+        // com privilégio de administrador.
+        [JsonProperty("sha256")]
+        public string Sha256 { get; set; } = string.Empty;
     }
 
     // Verifica e aplica atualizações do PDV a partir de um arquivo version.json hospedado
@@ -30,6 +36,11 @@ namespace PdvPadaria.Services
     public static class UpdateService
     {
         private const string VersionUrl = "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/docs/version.json";
+
+        // O endereço do instalador vinha DENTRO do arquivo baixado, então quem
+        // controlasse esse arquivo apontava o download para onde quisesse. Fixar o
+        // prefixo aqui tira essa escolha de quem publica o JSON.
+        private const string PrefixoPermitido = "https://raw.githubusercontent.com/azelfo/pdv-padaria/";
 
         private static readonly HttpClient _http = new HttpClient
         {
@@ -48,6 +59,15 @@ namespace PdvPadaria.Services
                 if (info == null || string.IsNullOrWhiteSpace(info.Version) || string.IsNullOrWhiteSpace(info.Url))
                     return null;
 
+                // Sem impressão digital declarada, não oferece a atualização. Recusar é
+                // melhor que executar um binário que não dá para conferir: um caixa que
+                // não atualiza continua vendendo; um caixa comprometido, não.
+                if (info.Sha256 == null || info.Sha256.Trim().Length != 64)
+                {
+                    Debug.WriteLine("[UpdateService]: version.json sem sha256; atualização ignorada.");
+                    return null;
+                }
+
                 var current = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
                 if (current == null) return null;
 
@@ -60,6 +80,14 @@ namespace PdvPadaria.Services
             {
                 Debug.WriteLine($"[UpdateService.CheckForUpdateAsync Error]: {ex.Message}");
                 return null;
+            }
+        }
+
+        private static string ImpressaoDigital(byte[] dados)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                return BitConverter.ToString(sha.ComputeHash(dados)).Replace("-", string.Empty);
             }
         }
 
@@ -79,16 +107,33 @@ namespace PdvPadaria.Services
         // Baixa o instalador e o executa de forma silenciosa; em seguida encerra ESTE processo
         // (libera os arquivos para o instalador sobrescrever) e o instalador reabre o PDV sozinho
         // ao final (ver [Run] com Check: ShouldRelaunchSilently em setup.iss).
-        public static async Task<bool> DownloadAndInstallAsync(string url)
+        public static async Task<bool> DownloadAndInstallAsync(UpdateInfo info)
         {
             try
             {
+                // Duas conferências antes de qualquer coisa tocar o disco.
+                if (!info.Url.StartsWith(PrefixoPermitido, StringComparison.OrdinalIgnoreCase))
+                {
+                    Debug.WriteLine($"[UpdateService]: endereço fora do repositório oficial: {info.Url}");
+                    return false;
+                }
+
                 var tempPath = Path.Combine(Path.GetTempPath(), "Setup_PadariaVenancio_update.exe");
 
-                using (var response = await _http.GetAsync(url))
+                using (var response = await _http.GetAsync(info.Url))
                 {
                     response.EnsureSuccessStatusCode();
                     var bytes = await response.Content.ReadAsByteArrayAsync();
+
+                    // Confere ANTES de gravar: um arquivo que não bate nunca chega a existir
+                    // no disco, então não há como ser executado por engano depois.
+                    string digital = ImpressaoDigital(bytes);
+                    if (!string.Equals(digital, info.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        Debug.WriteLine($"[UpdateService]: impressão digital não confere. esperado={info.Sha256} obtido={digital}");
+                        return false;
+                    }
+
                     // File.WriteAllBytesAsync não existe no .NET Framework 4.8.
                     await Task.Run(() => File.WriteAllBytes(tempPath, bytes));
                 }
