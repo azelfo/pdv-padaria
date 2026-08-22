@@ -1,6 +1,6 @@
 {
-  "version": "1.1.9",
+  "version": "1.1.10",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "b9fd447043d9bd8210aecc4da5b86370fe751e695818b1f2d39b91bb2d0ec769",
-  "notes": "O caixa passa a buscar catalogo e estoque por um unico canal, no qual o servidor decide sozinho quais dados pertencem a esta loja - antes quem dizia isso era o proprio caixa, no pedido. Na pratica: a mesma tela, uma ida a rede em vez de cinco, e nenhuma chance de uma loja enxergar dados de outra empresa. Continua valendo o reforco da versao anterior: o instalador so roda se a impressao digital conferir, e sair do sistema descarta a sessao anterior por completo. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
+  "sha256": "5bbc294cdb513e4d564b600c2e704104af420e9a65eb9288a50bab1285c28091",
+  "notes": "Correcao no cancelamento de venda. O botao Cancelar aparecia tambem quando a venda era aberta pela lista da nuvem, inclusive em venda de outra loja - e ali o clique nao fazia nada: o aviso dizia que o estoque seria devolvido, o operador confirmava e nada acontecia, sem nenhuma mensagem. Agora o botao so aparece quando a venda e desta loja, que e a unica que pode devolver o estoque dela; nos outros casos o caixa explica na tela em vez de ficar calado. O botao tambem fica desligado enquanto o estorno esta sendo feito, para um clique duplo nao devolver o estoque duas vezes. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
 }
