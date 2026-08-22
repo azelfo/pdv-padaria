@@ -1,6 +1,6 @@
 {
-  "version": "1.1.8",
+  "version": "1.1.9",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "48271cc100f56f90a6682db2c0f537f49072b579c5d25f1e3e96ee794b2c54c4",
-  "notes": "Reforco de seguranca na propria atualizacao. Antes, o caixa baixava o instalador e o executava sem conferir se era mesmo o arquivo publicado. Agora ele confere a impressao digital do arquivo antes de rodar qualquer coisa, e so aceita download vindo do endereco oficial do sistema - se nao bater, recusa e continua na versao atual, vendendo normalmente. Junto: ao sair do sistema, o caixa passa a descartar de vez os dados da sessao anterior. Antes, entrar com outro usuario sem fechar o programa podia reaproveitar a loja de quem estava logado antes, o que fazia o sistema se comportar de um jeito na primeira entrada e de outro na segunda. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
+  "sha256": "b9fd447043d9bd8210aecc4da5b86370fe751e695818b1f2d39b91bb2d0ec769",
+  "notes": "O caixa passa a buscar catalogo e estoque por um unico canal, no qual o servidor decide sozinho quais dados pertencem a esta loja - antes quem dizia isso era o proprio caixa, no pedido. Na pratica: a mesma tela, uma ida a rede em vez de cinco, e nenhuma chance de uma loja enxergar dados de outra empresa. Continua valendo o reforco da versao anterior: o instalador so roda se a impressao digital conferir, e sair do sistema descarta a sessao anterior por completo. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
 }

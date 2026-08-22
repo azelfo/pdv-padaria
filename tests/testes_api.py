@@ -139,6 +139,16 @@ def teste_recusa_no_corpo():
 # ---------------------------------------------------------------------------
 # 4. CONTRATO DAS FUNCOES DE IDENTIDADE
 # ---------------------------------------------------------------------------
+def teste_leitura_recortada():
+    """A leitura de catalogo passou a sair por uma funcao que deriva a loja do
+    token, igual a escrita. Com token invalido nao pode devolver dado nenhum."""
+    status, corpo = pedir("/rest/v1/rpc/pull_cadastros", {"p_token": "token-que-nao-existe"})
+    checa("[leitura] pull_cadastros recusa token invalido",
+          status == 200 and '"error"' in corpo, f"status={status} corpo={corpo[:80]}")
+    checa("[leitura] pull_cadastros nao vaza catalogo para token invalido",
+          '"products"' not in corpo, "devolveu catalogo mesmo recusando")
+
+
 def teste_identidade():
     status, corpo = pedir("/rest/v1/rpc/loja_do_token", {"p_token": "lixo"})
     checa("[identidade] token invalido nao resolve loja nenhuma",
@@ -196,7 +206,8 @@ def teste_versao_declara_digital():
 
 def main():
     for t in (teste_vazamento, teste_nega_por_padrao, teste_recusa_no_corpo,
-              teste_identidade, teste_instalador, teste_versao_declara_digital):
+              teste_leitura_recortada, teste_identidade, teste_instalador,
+              teste_versao_declara_digital):
         t()
 
     largura = max(len(n) for n, _, _ in resultados)

@@ -425,21 +425,16 @@ namespace PdvPadaria.Services
 
             try
             {
-                var categoriesTask = GetFromSupabaseAsync<Category>(
-                    $"Category?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
-                var productsTask = GetFromSupabaseAsync<Product>(
-                    $"Product?tenantId=eq.{Uri.EscapeDataString(tenantId)}");
-                var storeProductsTask = GetFromSupabaseAsync<StoreProductDto>(
-                    $"StoreProduct?storeId=eq.{Uri.EscapeDataString(storeId)}");
-                var breadConfigsTask = GetFromSupabaseAsync<BreadConfig>(
-                    $"BreadConfig?storeId=eq.{Uri.EscapeDataString(storeId)}&active=eq.true");
+                // Uma chamada só, recortada pelo servidor. Antes eram cinco consultas às
+                // tabelas, cada uma levando o recorte de rede como parâmetro na URL — ou
+                // seja, o recorte era escolha do cliente, e qualquer portador da chave
+                // pública lia todas as redes. Aqui a loja vem do TOKEN, igual à escrita.
+                var cadastros = await ObterCadastrosAsync();
 
-                await Task.WhenAll(categoriesTask, productsTask, storeProductsTask, breadConfigsTask);
-
-                var categories = await categoriesTask;
-                var products = await productsTask;
-                var storeProducts = await storeProductsTask;
-                var breadConfigs = await breadConfigsTask;
+                var categories = cadastros?.Categories;
+                var products = cadastros?.Products;
+                var storeProducts = cadastros?.StoreProducts;
+                var breadConfigs = cadastros?.BreadConfigs;
 
                 if (products == null || storeProducts == null || breadConfigs == null)
                 {
@@ -511,7 +506,7 @@ namespace PdvPadaria.Services
                 });
 
                 if (!await ApplyOwnerAdjustmentsAsync(
-                        tenantId, storeId,
+                        tenantId, storeId, cadastros!.OwnerAdjustments,
                         snapshotDaSemeadura: semearEstoqueDaNuvem ? stockMap : null))
                     return false;
                 return true;
@@ -526,18 +521,19 @@ namespace PdvPadaria.Services
 
         private async Task<bool> ApplyOwnerAdjustmentsAsync(
             string tenantId, string storeId,
+            List<OwnerStockAdjustmentDto>? ajustes,
             IReadOnlyDictionary<string, StoreProductDto>? snapshotDaSemeadura)
         {
             try
             {
-                var ajustes = await GetFromSupabaseAsync<OwnerStockAdjustmentDto>(
-                    $"OwnerStockAdjustment?storeId=eq.{Uri.EscapeDataString(storeId)}&order=createdAt.asc");
+                // Os ajustes vêm no mesmo pacote do catálogo, já recortados pelo servidor.
                 if (ajustes == null)
                 {
                     LastError = "Falha ao carregar os ajustes de estoque da loja.";
                     return false;
                 }
                 if (ajustes.Count == 0) return true;
+                await Task.CompletedTask;
 
                 _dbConnection.RunInTransaction(() =>
                 {
@@ -621,6 +617,63 @@ namespace PdvPadaria.Services
             return 0;
         }
 
+        /// <summary>
+        /// Baixa catálogo, estoque, tabela do pão e ajustes do dono numa chamada só,
+        /// recortados no servidor a partir do token desta máquina.
+        ///
+        /// Substitui cinco consultas diretas às tabelas. Aquelas dependiam de o cliente
+        /// mandar o filtro certo na URL — e quem esquecesse (ou trocasse) o filtro recebia
+        /// as linhas de todas as redes, porque a política de leitura era liberada para
+        /// qualquer portador da chave pública. Aqui, esquecer não é possível: a loja é
+        /// derivada da credencial, do mesmo jeito que já acontece na escrita.
+        /// </summary>
+        private async Task<CadastrosDto?> ObterCadastrosAsync()
+        {
+            try
+            {
+                var corpoReq = new StringContent(
+                    JsonConvert.SerializeObject(new { p_token = StoreIdentityService.TokenAtual() }),
+                    Encoding.UTF8, "application/json");
+
+                using (var request = new HttpRequestMessage(
+                    HttpMethod.Post, $"{_supabaseUrl.TrimEnd('/')}/rest/v1/rpc/pull_cadastros"))
+                {
+                    request.Content = corpoReq;
+                    request.Headers.Add("apikey", _supabaseAnonKey);
+                    request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
+
+                    var response = await _httpClient.SendAsync(request);
+                    string corpo = await response.Content.ReadAsStringAsync();
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        LastError = $"Erro HTTP {response.StatusCode} no pull_cadastros: {corpo}";
+                        return null;
+                    }
+
+                    // Mesma armadilha das outras RPCs: recusa vem no corpo, com HTTP 200.
+                    string? erro = ErroDaResposta(corpo);
+                    if (erro != null)
+                    {
+                        LastError = erro;
+                        return null;
+                    }
+
+                    var settings = new JsonSerializerSettings
+                    {
+                        ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver()
+                    };
+                    return JsonConvert.DeserializeObject<CadastrosDto>(corpo, settings);
+                }
+            }
+            catch (Exception ex)
+            {
+                LastError = ex.Message;
+                System.Diagnostics.Debug.WriteLine($"[pull_cadastros]: {ex.Message}");
+                return null;
+            }
+        }
+
         // Método genérico para fazer GET diretamente na API REST do Supabase
         private async Task<List<T>?> GetFromSupabaseAsync<T>(string urlQuery)
         {
@@ -672,6 +725,19 @@ namespace PdvPadaria.Services
         public double Quantity { get; set; }
         public double MinStock { get; set; }
         public DateTime UpdatedAt { get; set; }
+    }
+
+    // Pacote devolvido por pull_cadastros: tudo que o caixa precisa ler, já recortado
+    // pela loja do token. Os nomes batem com as colunas do Postgres via camelCase.
+    public class CadastrosDto
+    {
+        public string StoreId { get; set; } = string.Empty;
+        public string TenantId { get; set; } = string.Empty;
+        public List<Category> Categories { get; set; } = new List<Category>();
+        public List<Product> Products { get; set; } = new List<Product>();
+        public List<StoreProductDto> StoreProducts { get; set; } = new List<StoreProductDto>();
+        public List<BreadConfig> BreadConfigs { get; set; } = new List<BreadConfig>();
+        public List<OwnerStockAdjustmentDto> OwnerAdjustments { get; set; } = new List<OwnerStockAdjustmentDto>();
     }
 
     public class OwnerStockAdjustmentDto
