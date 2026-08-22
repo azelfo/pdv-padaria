@@ -120,6 +120,27 @@ namespace PdvPadaria.Services
         }
 
         /// <summary>
+        /// Descarta o que esta execução já descobriu, para o próximo login recomeçar do zero.
+        ///
+        /// Existe porque estes campos são estáticos: eles vivem enquanto o processo viver, e
+        /// o logout não reinicia o processo — troca a janela. Sem esta chamada, entrar com
+        /// outro usuário reaproveitava a identidade do anterior, e o caixa passava a se
+        /// comportar de um jeito na primeira entrada e de outro na segunda. Era essa a
+        /// "sessão fantasma".
+        ///
+        /// NÃO apaga os arquivos de identidade: token e loja pertencem à MÁQUINA, não a quem
+        /// está logado. Apagá-los faria o caixa perder o cadastro dele e precisar registrar
+        /// de novo a cada troca de turno.
+        /// </summary>
+        public static void Encerrar()
+        {
+            _storeId = string.Empty;
+            _resolvido = false;
+            TokenInvalido = false;
+            TokenAusente = false;
+        }
+
+        /// <summary>
         /// Pergunta à nuvem de quem é o token desta máquina e fixa a resposta. Roda uma vez
         /// por execução, a não ser que um registro novo peça para refazer. Nunca lança:
         /// máquina offline segue com a última identidade conhecida.

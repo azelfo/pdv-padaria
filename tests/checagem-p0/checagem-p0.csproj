@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Checagem das correcoes P0-1 e P0-3.
+
+    Compila os servicos do PDV direto do codigo-fonte, sem tocar no projeto WPF,
+    e exercita as decisoes que importam:
+      - o instalador so roda se vier do repositorio oficial E com a impressao
+        digital conferindo;
+      - o estado da sessao morre no logout e a sessao seguinte recomeca do zero.
+
+    Roda em qualquer maquina com dotnet:  dotnet run (a partir de tests/checagem-p0)
+    Precisa do PdvPadaria/.env ao lado do executavel (o Directory.Build copia).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>checagem-p0</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\PdvPadaria\Services\UpdateService.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\StoreIdentityService.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\EnvService.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\PdvPadaria\.env" Condition="Exists('..\..\PdvPadaria\.env')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>.env</Link>
+    </None>
+  </ItemGroup>
+
+</Project>

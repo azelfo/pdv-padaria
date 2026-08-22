@@ -2212,6 +2212,11 @@ namespace PdvPadaria
             await _syncGate.WaitAsync();
             _syncGate.Release();
 
+            // Só agora, com venda e sincronização paradas, é seguro descartar a identidade
+            // desta sessão. Antes disto o logout trocava a janela e deixava o estado de pé:
+            // o próximo login herdava a loja do anterior sem reconsultar a nuvem.
+            StoreIdentityService.Encerrar();
+
             var login = new LoginWindow();
             login.Show();
             Close();
