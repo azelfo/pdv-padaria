@@ -47,6 +47,25 @@ class Program
         Checa("2a sessao reconsulta e resolve de novo", StoreIdentityService.StoreId == antes,
               $"antes={antes} depois={StoreIdentityService.StoreId}");
 
+        Console.WriteLine("\n== cancelamento: so a loja dona pode estornar ==");
+        Checa("venda desta loja pode ser cancelada aqui",
+              StoreIdentityService.PertenceAEstaMaquina(antes));
+        Checa("venda de OUTRA loja e barrada",
+              !StoreIdentityService.PertenceAEstaMaquina("e33ec1a1-a041-4fae-aefa-625bc518772f"),
+              "deixaria cancelar venda de outra loja -> travaria a fila de envio");
+        Checa("registro sem loja e barrado",
+              !StoreIdentityService.PertenceAEstaMaquina(null));
+        Checa("loja em branco e barrada",
+              !StoreIdentityService.PertenceAEstaMaquina("   "));
+        // A identidade da MAQUINA sobrevive ao logout de proposito: e ela que permite o
+        // caixa abrir e operar sem internet no dia seguinte. O que o logout descarta e a
+        // SESSAO. Se esta asserção passar a falhar, o caixa perdeu a capacidade de saber
+        // de que loja ele e quando abrir offline.
+        StoreIdentityService.Encerrar();
+        Checa("apos o logout a maquina ainda sabe de que loja e",
+              StoreIdentityService.PertenceAEstaMaquina(antes),
+              "perdeu a identidade da maquina; abriria offline sem saber a loja");
+
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;
     }

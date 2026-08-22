@@ -117,7 +117,7 @@
 
                 <Button Content="Voltar para a Lista" Style="{StaticResource ShortcutButton}" Click="CloseButton_Click" Height="40" Padding="20,0"/>
 
-                <Button Grid.Column="1" x:Name="BtnCancel" Content="Cancelar Venda" Padding="20,0" Height="40" FontSize="12" FontWeight="Bold"
+                <Button Grid.Column="1" x:Name="BtnCancel" Visibility="Collapsed" Content="Cancelar Venda" Padding="20,0" Height="40" FontSize="12" FontWeight="Bold"
                         Background="#26ef4444" Foreground="#ef4444" BorderThickness="1" BorderBrush="#ef4444" Cursor="Hand" Click="CancelButton_Click" Margin="15,0,0,0">
                     <Button.Resources>
                         <Style TargetType="Border">

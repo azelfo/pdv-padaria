@@ -91,6 +91,7 @@ namespace PdvPadaria.Views
 
             // Botão cancelar visível apenas se for local e não cancelada
             BtnCancel.Visibility = isCanceled ? Visibility.Collapsed : Visibility.Visible;
+            BtnCancel.IsEnabled = true;
 
             // Busca itens da venda
             var items = await connection.Table<SaleItem>().Where(i => i.SaleId == _saleId).ToListAsync();
@@ -182,6 +183,21 @@ namespace PdvPadaria.Views
             BorderStatus.Background = isCanceled ? AppColors.DangerBadge : AppColors.SuccessBadge;
             TxtStatus.Foreground = isCanceled ? AppColors.Danger : AppColors.Success;
 
+            // Cancelar SÓ é possível na loja que fez a venda: o estorno devolve estoque no
+            // banco desta máquina, e o servidor recusa gravação fora da loja do token.
+            //
+            // Este caminho remoto também abre venda DESTA loja (a visão "Todas as sedes"
+            // sempre carrega pela nuvem), então não dá para esconder o botão sempre — a
+            // pergunta certa não é "veio da nuvem?", é "esta venda é desta máquina?".
+            //
+            // Antes o botão simplesmente ficava visível aqui e o clique caía num retorno
+            // silencioso: o operador confirmava um aviso prometendo devolver o estoque e
+            // nada acontecia, sem mensagem nenhuma.
+            BtnCancel.Visibility = (!isCanceled && await PodeCancelarAquiAsync())
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            BtnCancel.IsEnabled = true;
+
             // Preenche os itens na tela
             var views = new List<SaleDetailItemView>();
             if (result.Itens != null)
@@ -202,13 +218,47 @@ namespace PdvPadaria.Views
             ItemsList.ItemsSource = views;
         }
 
+        /// <summary>
+        /// Esta venda pode ser cancelada NESTA máquina?
+        ///
+        /// Só se ela estiver no banco local E pertencer à loja desta máquina. O estorno
+        /// devolve estoque aqui e o servidor recusa gravação fora da loja do token — uma
+        /// tentativa de cancelar venda de outra loja seria rejeitada com invalid_scope, e
+        /// como a recusa derruba o LOTE inteiro, ela travaria o envio de TODAS as vendas
+        /// pendentes até alguém descobrir o motivo.
+        /// </summary>
+        private async Task<bool> PodeCancelarAquiAsync()
+        {
+            var sale = await App.Database.GetConnection().FindAsync<Sale>(_saleId);
+            if (sale == null || sale.PaymentStatus == "CANCELADO") return false;
+
+            return StoreIdentityService.PertenceAEstaMaquina(sale.StoreId, _currentUser.StoreId ?? string.Empty);
+        }
+
         private async void CancelButton_Click(object sender, RoutedEventArgs e)
         {
+            // Mesma pergunta que decidiu mostrar o botão, refeita na hora de agir: entre
+            // abrir a tela e clicar, a máquina pode ter trocado de loja.
+            if (!await PodeCancelarAquiAsync())
+            {
+                MessageBox.Show(
+                    "Esta venda não pode ser cancelada neste caixa.\n\n" +
+                    "O cancelamento devolve o estoque na loja que fez a venda, então ele só " +
+                    "pode ser feito no caixa daquela loja. Se a venda já estiver cancelada, " +
+                    "atualize a tela para ver o estado novo.",
+                    "Cancelamento indisponível", MessageBoxButton.OK, MessageBoxImage.Warning);
+                BtnCancel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             if (MessageBox.Show("Deseja realmente cancelar/estornar esta venda? O estoque dos produtos será devolvido.", "Confirmação", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             {
                 return;
             }
 
+            // Desliga o botão pela duração da operação: devolver o estoque duas vezes por
+            // um clique duplo criaria pão que nunca existiu.
+            BtnCancel.IsEnabled = false;
             try
             {
                 var connection = App.Database.GetConnection();
@@ -267,6 +317,10 @@ namespace PdvPadaria.Views
             catch (Exception ex)
             {
                 MessageBox.Show($"Erro ao cancelar venda: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                BtnCancel.IsEnabled = true;
             }
         }
 

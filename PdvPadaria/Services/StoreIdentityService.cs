@@ -120,6 +120,27 @@ namespace PdvPadaria.Services
         }
 
         /// <summary>
+        /// Este registro (venda, movimento) é da loja desta máquina?
+        ///
+        /// Serve para barrar operação que só a loja dona pode fazer — cancelar uma venda,
+        /// por exemplo, que devolve estoque no banco local. O servidor já recusa gravação
+        /// fora da loja do token, mas a recusa derruba o LOTE inteiro do envio: uma
+        /// operação errada numa tela travaria a subida de TODAS as vendas pendentes. Por
+        /// isso a pergunta é feita antes, aqui, e não depois, lá.
+        ///
+        /// Loja desconhecida devolve falso: sem saber quem se é, não se age.
+        /// </summary>
+        public static bool PertenceAEstaMaquina(string? storeIdDoRegistro, string fallback = "")
+        {
+            if (string.IsNullOrWhiteSpace(storeIdDoRegistro)) return false;
+
+            string lojaDesteCaixa = Atual(fallback);
+            if (string.IsNullOrWhiteSpace(lojaDesteCaixa)) return false;
+
+            return string.Equals(storeIdDoRegistro, lojaDesteCaixa, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// Descarta o que esta execução já descobriu, para o próximo login recomeçar do zero.
         ///
         /// Existe porque estes campos são estáticos: eles vivem enquanto o processo viver, e
