@@ -130,6 +130,18 @@ class Program
         Checa("o veredito sobrevive ao logout", StoreIdentityService.TokenInvalido,
               "esqueceu que o token foi recusado; abriria offline sem aviso");
 
+        Console.WriteLine("\n== etapa 1: a sessao e imutavel e unica ==");
+        var s1 = new Sessao("u-1", "ATENDENTE", "loja-a", "rede-1");
+        var s2 = new Sessao("u-1", "ATENDENTE", "loja-a", "rede-1");
+        Checa("cada sessao tem geracao propria", s1.Geracao != s2.Geracao,
+              "duas sessoes com a mesma geracao: resposta atrasada de uma passaria pela outra");
+        Checa("geracao nao vem vazia", !string.IsNullOrWhiteSpace(s1.Geracao));
+        // Trocar de loja tem que ser encerrar uma sessao e abrir outra, nunca mutar esta.
+        foreach (var prop in new[] { "LojaId", "RedeId", "UsuarioId", "Papel", "Geracao" })
+            Checa($"{prop} nao tem setter", typeof(Sessao).GetProperty(prop)?.SetMethod == null,
+                  "sessao mutavel: da para trocar a loja sem passar por login");
+        Checa("guarda o momento de abertura", s1.AbertaEm > DateTime.MinValue);
+
         try { Directory.Delete(pastaTeste, true); } catch { }
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;
