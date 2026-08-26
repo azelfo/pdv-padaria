@@ -161,8 +161,9 @@ namespace PdvPadaria.Services
         {
             _storeId = string.Empty;
             _resolvido = false;
-            TokenInvalido = false;
             TokenAusente = false;
+            // TokenInvalido sobrevive de propósito: é um fato sobre a CREDENCIAL da máquina,
+            // não sobre quem estava logado. Sair do sistema não conserta um token recusado.
         }
 
         /// <summary>
@@ -176,8 +177,11 @@ namespace PdvPadaria.Services
             _resolvido = true;
 
             GarantirCacheDoEstoque();
-            TokenInvalido = false;
             TokenAusente = false;
+            // TokenInvalido NÃO é zerado aqui. Ele só muda quando a nuvem responde: se o
+            // caixa abrir sem conexão, o veredito anterior continua valendo. Zerá-lo antes
+            // de perguntar fazia o aviso sumir num logout+login offline, e o caixa voltava
+            // a operar calado com uma credencial que a nuvem já tinha recusado.
 
             string token = TokenAtual();
             if (string.IsNullOrWhiteSpace(token))
@@ -191,6 +195,8 @@ namespace PdvPadaria.Services
 
             if (alcancouNuvem && !string.IsNullOrWhiteSpace(lojaDoToken))
             {
+                // A nuvem reconheceu o token: só agora o veredito anterior deixa de valer.
+                TokenInvalido = false;
                 _storeId = lojaDoToken;
                 GravarArquivo(CaminhoLoja, lojaDoToken);
                 return;

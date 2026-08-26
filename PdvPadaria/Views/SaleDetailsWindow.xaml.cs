@@ -89,8 +89,13 @@ namespace PdvPadaria.Views
             BorderStatus.Background = isCanceled ? AppColors.DangerBadge : AppColors.SuccessBadge;
             TxtStatus.Foreground = isCanceled ? AppColors.Danger : AppColors.Success;
 
-            // Botão cancelar visível apenas se for local e não cancelada
-            BtnCancel.Visibility = isCanceled ? Visibility.Collapsed : Visibility.Visible;
+            // Mesma pergunta do caminho remoto, feita pelo mesmo método: uma venda no banco
+            // local pode ser de OUTRA loja (a máquina já operou como ela e o histórico é
+            // preservado de propósito). Oferecer o botão nesse caso deixava o operador
+            // confirmar um estorno que seria recusado pelo servidor.
+            BtnCancel.Visibility = await PodeCancelarAquiAsync()
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             BtnCancel.IsEnabled = true;
 
             // Busca itens da venda
@@ -311,8 +316,11 @@ namespace PdvPadaria.Views
                 _wasCanceled = true;
                 MessageBox.Show("Venda cancelada com sucesso! Estoque devolvido.", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
                 
-                // Recarrega a visualização da tela para refletir o status cancelado e ocultar botão
-                await LoadSaleData();
+                // Recarrega SEMPRE pelo banco local, mesmo que a venda tenha sido aberta pela
+                // nuvem. O cancelamento acabou de acontecer aqui e ainda não subiu — recarregar
+                // pela nuvem mostraria APROVADO em verde logo depois do aviso de sucesso, e o
+                // operador não teria como saber se o estorno valeu.
+                await LoadLocalSale();
             }
             catch (Exception ex)
             {

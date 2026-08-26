@@ -508,7 +508,7 @@ namespace PdvPadaria.Services
                     }
                 });
 
-                if (!await ApplyOwnerAdjustmentsAsync(
+                if (!ApplyOwnerAdjustments(
                         tenantId, storeId, cadastros!.OwnerAdjustments,
                         snapshotDaSemeadura: semearEstoqueDaNuvem ? stockMap : null))
                     return false;
@@ -522,7 +522,7 @@ namespace PdvPadaria.Services
             }
         }
 
-        private async Task<bool> ApplyOwnerAdjustmentsAsync(
+        private bool ApplyOwnerAdjustments(
             string tenantId, string storeId,
             List<OwnerStockAdjustmentDto>? ajustes,
             IReadOnlyDictionary<string, StoreProductDto>? snapshotDaSemeadura)
@@ -536,7 +536,6 @@ namespace PdvPadaria.Services
                     return false;
                 }
                 if (ajustes.Count == 0) return true;
-                await Task.CompletedTask;
 
                 _dbConnection.RunInTransaction(() =>
                 {
@@ -688,45 +687,6 @@ namespace PdvPadaria.Services
             {
                 LastError = ex.Message;
                 System.Diagnostics.Debug.WriteLine($"[pull_cadastros]: {ex.Message}");
-                return null;
-            }
-        }
-
-        // Método genérico para fazer GET diretamente na API REST do Supabase
-        private async Task<List<T>?> GetFromSupabaseAsync<T>(string urlQuery)
-        {
-            try
-            {
-                var url = $"{_supabaseUrl.TrimEnd('/')}/rest/v1/{urlQuery}";
-                using (var request = new HttpRequestMessage(HttpMethod.Get, url))
-                {
-                    request.Headers.Add("apikey", _supabaseAnonKey);
-                    request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
-
-                    var response = await _httpClient.SendAsync(request);
-                    if (response.IsSuccessStatusCode)
-                    {
-                        var responseText = await response.Content.ReadAsStringAsync();
-                        // Deserializa camelCase do Postgres para PascalCase do C#
-                        var settings = new JsonSerializerSettings
-                        {
-                            ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver()
-                        };
-                        return JsonConvert.DeserializeObject<List<T>>(responseText, settings);
-                    }
-                    else
-                    {
-                        string errorBody = await response.Content.ReadAsStringAsync();
-                        LastError = $"Erro HTTP {response.StatusCode} no GET {urlQuery}: {errorBody}";
-                        System.Diagnostics.Debug.WriteLine($"[Supabase GET Error]: {LastError}");
-                    }
-                }
-                return null;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                System.Diagnostics.Debug.WriteLine($"[Supabase GET Error for {urlQuery}]: {ex.Message}");
                 return null;
             }
         }

@@ -119,6 +119,17 @@ class Program
             Checa("nada foi gravado no banco", prod == 0, $"{prod} produto(s) gravados");
         }
 
+        Console.WriteLine("\n== token recusado continua recusado depois do logout ==");
+        StoreIdentityService.Encerrar();
+        File.WriteAllText(Path.Combine(pastaTeste, "caixa-token.dat"), "token-que-nao-existe");
+        await StoreIdentityService.ResolverAsync(string.Empty);
+        Checa("nuvem recusou o token", StoreIdentityService.TokenInvalido, "nao marcou como invalido");
+        StoreIdentityService.Encerrar();
+        // Sair do sistema não conserta credencial recusada. Zerar o veredito aqui fazia o
+        // aviso sumir num logout+login sem internet, e o caixa voltava a operar calado.
+        Checa("o veredito sobrevive ao logout", StoreIdentityService.TokenInvalido,
+              "esqueceu que o token foi recusado; abriria offline sem aviso");
+
         try { Directory.Delete(pastaTeste, true); } catch { }
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;
