@@ -1,6 +1,6 @@
 {
-  "version": "1.1.11",
+  "version": "1.1.12",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "391b0766903626badeae0d8c329ebc15c138538f50d617efb6ba7377a37435c1",
-  "notes": "Correcoes de robustez encontradas em revisao de codigo. A protecao que impede o caixa de gravar dados vindos errados da nuvem nao estava funcionando de fato - numa resposta fora do formato ele entendia 'esta loja nao tem nada' e, durante uma troca de loja, isso zerava o estoque dando a operacao por concluida. Agora ele recusa e nao grava nada. O caixa tambem passou a conferir se a loja que a nuvem respondeu e a mesma que ele opera, e a atualizacao confere o instalador uma segunda vez, ja no disco, antes de executar. O botao de cancelar venda ficou coerente nas duas telas, e o aviso de credencial recusada nao some mais ao sair e entrar sem internet. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
+  "sha256": "32fe754820030b0aeac8195ca0dd7444d119b9c0585d50e28e2e255d6ed6966a",
+  "notes": "Sair do sistema e fechar o programa passaram a enviar o que ainda esta na fila antes de encerrar - antes nenhum dos dois enviava nada, e a venda so subia na proxima abertura. Se nao der para enviar, o caixa fecha do mesmo jeito em ate dez segundos e avisa quantas vendas ficaram, em vez de travar sem internet. Fechar pelo X agora encerra a sessao igual ao botao Sair, entao entrar com outro usuario nao aproveita mais nada da sessao anterior. E uma venda feita sem internet numa loja nao pode mais subir carimbada em outra loja: se a maquina tiver trocado de loja no meio, o envio e recusado e a venda espera, em vez de ir para o lugar errado calada. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
 }
