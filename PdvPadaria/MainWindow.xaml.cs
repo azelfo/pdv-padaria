@@ -2209,8 +2209,14 @@ namespace PdvPadaria
             // método assíncrono aqui, então cancela-se esta passada e fecha-se de novo no fim.
             e.Cancel = true;
             if (_encerrandoEmCurso) return; // logout já está encerrando; ele fecha a janela
-            await EncerrarSessaoAsync();
-            Close();
+            try { await EncerrarSessaoAsync(); }
+            finally
+            {
+                // Fecha aconteça o que acontecer. Cancelar o fechamento e depois falhar antes
+                // do Close() deixaria o caixa impossível de fechar.
+                _sessaoEncerrada = true;
+                Close();
+            }
         }
 
         /// <summary>
@@ -2230,18 +2236,29 @@ namespace PdvPadaria
             if (_sessaoEncerrada || _encerrandoEmCurso) return;
             _encerrandoEmCurso = true;
 
-            _syncTimer?.Stop();
+            var resultado = ResultadoDoEncerramento.FicouPendente;
+            try
+            {
+                _syncTimer?.Stop();
 
-            // Espera venda e sync em curso antes de mexer na identidade desta base SQLite.
-            await _saleGate.WaitAsync();
-            _saleGate.Release();
-            await _syncGate.WaitAsync();
-            _syncGate.Release();
+                // Espera venda e sync em curso — mas COM LIMITE. Sem ele, uma trava que não
+                // fosse liberada (venda que falhou no meio) deixaria a janela cancelada para
+                // sempre: o caixa não fecharia nem pelo X, e alguém mataria pelo Gerenciador,
+                // que é encerramento sujo. Fechar tarde é melhor que não fechar.
+                if (await _saleGate.WaitAsync(TimeSpan.FromSeconds(5))) _saleGate.Release();
+                if (await _syncGate.WaitAsync(TimeSpan.FromSeconds(5))) _syncGate.Release();
 
-            SyncStatusText.Text = "Enviando o que falta...";
-            var resultado = await _escopo.EncerrarAsync(
-                async () => (await SincronizarDadosNuvem()).Item1,
-                TimeSpan.FromSeconds(10));
+                SyncStatusText.Text = "Enviando o que falta...";
+                resultado = await _escopo.EncerrarAsync(
+                    async () => (await SincronizarDadosNuvem()).Item1,
+                    TimeSpan.FromSeconds(10));
+            }
+            catch (Exception ex)
+            {
+                // Nada aqui pode impedir a janela de fechar.
+                System.Diagnostics.Debug.WriteLine($"[EncerrarSessaoAsync]: {ex.Message}");
+                try { _escopo.Dispose(); } catch { }
+            }
 
             _encerrando = true;
             _sessaoEncerrada = true;
