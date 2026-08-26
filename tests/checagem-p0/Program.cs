@@ -6,6 +6,11 @@ using PdvPadaria.Services;
 class Program
 {
     static int falhas = 0;
+    static bool Lanca<T>(Action acao) where T : Exception
+    {
+        try { acao(); return false; } catch (T) { return true; } catch { return false; }
+    }
+
     static void Checa(string nome, bool ok, string detalhe = "")
     {
         Console.WriteLine($"  {(ok ? "PASSA" : "FALHA")}  {nome}{(ok ? "" : "  <- " + detalhe)}");
@@ -141,6 +146,24 @@ class Program
             Checa($"{prop} nao tem setter", typeof(Sessao).GetProperty(prop)?.SetMethod == null,
                   "sessao mutavel: da para trocar a loja sem passar por login");
         Checa("guarda o momento de abertura", s1.AbertaEm > DateTime.MinValue);
+
+        Console.WriteLine("\n== etapa 3: o escopo desfaz a sessao ==");
+        await StoreIdentityService.ResolverAsync(string.Empty);   // identidade resolvida
+        var escopo = new EscopoDeSessao(new Sessao("u-1", "ATENDENTE", "loja-a", "rede-1"));
+        Checa("escopo nasce ativo", !escopo.Encerrado);
+
+        escopo.Dispose();
+        Checa("Dispose encerra o escopo", escopo.Encerrado);
+        // A limpeza deixa de depender de alguem lembrar de chamar Encerrar() no botao de
+        // logout: fechar pelo X passa a descartar o escopo pelo mesmo caminho.
+        Checa("Dispose limpa a identidade da sessao",
+              string.IsNullOrEmpty(StoreIdentityService.StoreId),
+              "estado da sessao anterior sobreviveu ao descarte do escopo");
+        Checa("operar num escopo encerrado e recusado",
+              Lanca<ObjectDisposedException>(() => escopo.GarantirAtivo()),
+              "escopo encerrado ainda aceita operacao");
+        escopo.Dispose();
+        Checa("Dispose duas vezes nao quebra", escopo.Encerrado);
 
         try { Directory.Delete(pastaTeste, true); } catch { }
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");

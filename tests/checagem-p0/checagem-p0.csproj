@@ -28,6 +28,7 @@
     <Compile Include="..\..\PdvPadaria\Services\StoreIdentityService.cs" />
     <Compile Include="..\..\PdvPadaria\Services\EnvService.cs" />
     <Compile Include="..\..\PdvPadaria\Services\Sessao.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\EscopoDeSessao.cs" />
     <Compile Include="..\..\PdvPadaria\Services\SyncService.cs" />
     <Compile Include="..\..\PdvPadaria\Models\*.cs" />
     <Compile Include="Program.cs" />
