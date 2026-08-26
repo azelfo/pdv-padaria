@@ -61,6 +61,7 @@ namespace PdvPadaria.Views
             {
                 User? user = null;
                 bool isOnlineSuccess = false;
+                Sessao? sessao = null;   // preenchida no caminho online; o offline monta abaixo
 
                 // 1. Tenta fazer validação Online contra o Supabase (se as chaves estiverem no .env)
                 string supabaseUrl = EnvService.Get("SUPABASE_URL");
@@ -244,10 +245,15 @@ namespace PdvPadaria.Views
                         return;
                     }
 
+                    // A sessão nasce aqui: é o primeiro ponto em que a loja está decidida.
+                    // Tudo que sincroniza daqui em diante carrega esta sessão, e ela é a
+                    // mesma que a janela principal vai receber — nao ha duas versoes.
+                    sessao = new Sessao(user.Id, user.Role, lojaAlvo, user.TenantId);
+
                     bool semearEstoque = StoreIdentityService.PrecisaSemearEstoque(lojaAlvo);
                     if (semearEstoque)
                     {
-                        using var prep = new SyncService(App.Database.GetSyncConnection());
+                        using var prep = new SyncService(App.Database.GetSyncConnection(), sessao);
                         var (ok, motivo) = prep.PodeTrocarDeLoja(lojaAlvo);
                         if (!ok)
                         {
@@ -278,7 +284,7 @@ namespace PdvPadaria.Views
                         // loja anterior enquanto o da nova ainda está a caminho.
                         try
                         {
-                            using var troca = new SyncService(App.Database.GetSyncConnection());
+                            using var troca = new SyncService(App.Database.GetSyncConnection(), sessao);
                             // Reconstroi a loja da nuvem + deltas locais ainda pendentes,
                             // envia a fila e publica a foto resultante.
                             bool carregou = await troca.PullUpdatesAsync(
@@ -311,7 +317,12 @@ namespace PdvPadaria.Views
 
                 // Sucesso completo: Abre a janela principal do PDV
                 // Passa as credenciais digitadas (memória) para o painel da rede do DONO.
-                var pdvWindow = new MainWindow(user!, email, password);
+                // Login offline não passa pela resolução de identidade acima, então a sessão
+                // é montada aqui com a loja que a máquina já conhece.
+                sessao ??= new Sessao(user!.Id, user!.Role,
+                    StoreIdentityService.Atual(user!.StoreId ?? string.Empty), user!.TenantId);
+
+                var pdvWindow = new MainWindow(user!, new EscopoDeSessao(sessao), email, password);
                 pdvWindow.Show();
                 
                 // Fecha a tela de login

@@ -96,7 +96,7 @@ namespace PdvPadaria
         private DateTime _lastBarcodeEvent = DateTime.MinValue;
         private readonly System.Text.StringBuilder _barcodeAccumulator = new System.Text.StringBuilder();
 
-        public MainWindow(User user, string loginEmail = "", string loginPassword = "")
+        public MainWindow(User user, EscopoDeSessao escopo, string loginEmail = "", string loginPassword = "")
         {
             InitializeComponent();
             CurrentUser = user;
@@ -104,13 +104,10 @@ namespace PdvPadaria
             _donoEmail = loginEmail;
             _donoPassword = loginPassword;
 
-            // A sessão começa aqui e termina quando esta janela terminar — por logout OU
-            // pelo X. Antes a limpeza morava só no clique do botão Sair, então fechar pela
-            // janela deixava o estado da sessão de pé no processo.
-            _escopo = new EscopoDeSessao(new Sessao(
-                CurrentUser.Id, CurrentUser.Role,
-                StoreIdentityService.Atual(CurrentUser.StoreId ?? string.Empty),
-                CurrentUser.TenantId));
+            // A sessão nasce no login, com a loja já decidida, e termina quando esta janela
+            // terminar — por logout OU pelo X. Recebê-la pronta (em vez de montar aqui) é o
+            // que garante que a tela e o sincronizador falam da MESMA sessão.
+            _escopo = escopo ?? throw new ArgumentNullException(nameof(escopo));
 
             OperatorNameText.Text = CurrentUser.Name;
             CartItemsList.ItemsSource = _cartItems;
@@ -4368,7 +4365,7 @@ namespace PdvPadaria
             {
                 if (_encerrando) return (true, string.Empty);
 
-                using var syncService = new SyncService(App.Database.GetSyncConnection());
+                using var syncService = new SyncService(App.Database.GetSyncConnection(), _escopo.Sessao);
 
                 string tenantId = CurrentUser.TenantId;
                 string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);

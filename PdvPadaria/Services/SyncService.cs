@@ -26,8 +26,15 @@ namespace PdvPadaria.Services
         private string _supabaseUrl = string.Empty;
         private string _supabaseAnonKey = string.Empty;
 
-        public SyncService(SQLiteConnection dbConnection)
+        /// <summary>Sessão dona deste sincronizador. Sem ela não existe instância.</summary>
+        public Sessao Sessao { get; }
+
+        public SyncService(SQLiteConnection dbConnection, Sessao sessao)
         {
+            // Exigir a sessão no construtor é o que transforma "lembrar de passar a loja"
+            // numa regra do compilador: não há como montar um sincronizador sem contexto.
+            Sessao = sessao ?? throw new ArgumentNullException(nameof(sessao));
+
             _dbConnection = dbConnection;
             // Espera até 5s por locks (concorrência com a conexão de vendas) em vez de falhar na hora.
             _dbConnection.BusyTimeout = TimeSpan.FromSeconds(5);

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using PdvPadaria.Services;
 
@@ -108,8 +109,9 @@ class Program
             c.CreateTable<PdvPadaria.Models.StockMovement>();
             c.CreateTable<PdvPadaria.Models.AppliedOwnerAdjustment>();
         }
+        var sessaoDoTeste = new Sessao("u", "ATENDENTE", "loja-que-nao-e-esta", "tenant-qualquer");
         using (var conn = new SQLite.SQLiteConnection(db))
-        using (var sync = new SyncService(conn))
+        using (var sync = new SyncService(conn, sessaoDoTeste))
         {
             // O token desta maquina resolve para a loja real. Pedir o pull dizendo ser OUTRA
             // loja tem que ser recusado: sem esta guarda, o catalogo e o estoque da loja do
@@ -192,6 +194,22 @@ class Program
         var res4 = await esc4.EncerrarAsync(() => throw new InvalidOperationException("rede caiu"), limite);
         Checa("erro no envio nao escapa para quem esta fechando",
               res4 == ResultadoDoEncerramento.FicouPendente && esc4.Encerrado);
+
+        Console.WriteLine("\n== etapa 4: nao existe sincronizador sem sessao ==");
+        // A garantia e de COMPILACAO: nao ha construtor sem Sessao, entao consulta sem
+        // contexto deixa de ser esquecimento e passa a nao compilar. O que da para afirmar
+        // em execucao e que passar nulo e recusado na hora, em vez de virar um objeto que
+        // grava sem saber por qual loja.
+        Checa("nenhum construtor de SyncService dispensa a sessao",
+              typeof(SyncService).GetConstructors()
+                  .All(ctor => ctor.GetParameters().Any(par => par.ParameterType == typeof(Sessao))),
+              "da para montar um sincronizador sem contexto de sessao");
+        using (var c2 = new SQLite.SQLiteConnection(Path.Combine(pastaTeste, "vazio.db")))
+        {
+            Checa("sessao nula e recusada na hora",
+                  Lanca<ArgumentNullException>(() => { using var _ = new SyncService(c2, null!); }),
+                  "aceitou sessao nula");
+        }
 
         Console.WriteLine("\n== etapa 6: configuracao nao atravessa a sessao ==");
         string urlAntes = EnvService.Get("SUPABASE_URL");
