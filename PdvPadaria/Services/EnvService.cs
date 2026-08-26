@@ -9,9 +9,31 @@ namespace PdvPadaria.Services
         private static readonly Dictionary<string, string> _envVars = new Dictionary<string, string>();
         private static bool _loaded = false;
 
+        /// <summary>
+        /// Quantas vezes o arquivo foi lido de verdade. Existe para o teste conseguir
+        /// distinguir "releu" de "continuou em cache" -- sem isso a checagem passaria
+        /// mesmo sem implementacao nenhuma, porque o cache antigo devolve o mesmo valor.
+        /// </summary>
+        public static int Carregamentos { get; private set; }
+
+        /// <summary>
+        /// Derruba o cache para a proxima leitura vir do arquivo.
+        ///
+        /// O cache e estatico e atravessava o logout inteiro: a configuracao lida na sessao
+        /// de uma empresa continuava valendo na seguinte. Enquanto ha uma rede so isso e
+        /// inofensivo; com duas, e dado de uma empresa sobrevivendo na sessao de outra.
+        /// Chamado por EscopoDeSessao.Dispose().
+        /// </summary>
+        public static void Recarregar()
+        {
+            _envVars.Clear();
+            _loaded = false;
+        }
+
         private static void Load()
         {
             if (_loaded) return;
+            Carregamentos++;
 
             try
             {

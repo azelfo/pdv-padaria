@@ -112,6 +112,11 @@ namespace PdvPadaria.Services
             // loja conhecida, veredito do token) sobrevive de propósito: ela não é da
             // pessoa que estava logada.
             StoreIdentityService.Encerrar();
+
+            // A configuracao tambem e da sessao: lida uma vez por processo, ela atravessava
+            // o logout. Com uma rede so isso nao aparece; com duas, e dado de uma empresa
+            // vivo na sessao de outra.
+            EnvService.Recarregar();
         }
     }
 }

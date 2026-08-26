@@ -193,6 +193,24 @@ class Program
         Checa("erro no envio nao escapa para quem esta fechando",
               res4 == ResultadoDoEncerramento.FicouPendente && esc4.Encerrado);
 
+        Console.WriteLine("\n== etapa 6: configuracao nao atravessa a sessao ==");
+        string urlAntes = EnvService.Get("SUPABASE_URL");
+        Checa("config carregada", !string.IsNullOrEmpty(urlAntes));
+
+        int cargasAntes = EnvService.Carregamentos;
+        var esc5 = new EscopoDeSessao(new Sessao("u", "ATENDENTE", "loja-a", "rede-1"));
+        esc5.Dispose();
+        string urlDepois = EnvService.Get("SUPABASE_URL");
+
+        // Contar as cargas e o que distingue "releu" de "continuou em cache". Sem isto o
+        // teste passaria mesmo sem implementacao nenhuma -- o cache antigo devolveria o
+        // mesmo valor e o verde seria mentira.
+        Checa("descartar o escopo derruba o cache de configuracao",
+              EnvService.Carregamentos > cargasAntes,
+              "config da sessao anterior continuou em memoria");
+        Checa("a releitura nao perde nada", urlDepois == urlAntes,
+              "caixa abriria a sessao seguinte sem saber falar com a nuvem");
+
         try { Directory.Delete(pastaTeste, true); } catch { }
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;
