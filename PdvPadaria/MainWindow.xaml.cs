@@ -65,6 +65,10 @@ namespace PdvPadaria
         private readonly System.Threading.SemaphoreSlim _syncGate = new System.Threading.SemaphoreSlim(1, 1);
         private readonly System.Threading.SemaphoreSlim _saleGate = new System.Threading.SemaphoreSlim(1, 1);
         private bool _encerrando;
+        private readonly EscopoDeSessao _escopo;
+        // Segunda passada pelo Closing: o encerramento é assíncrono e o WPF não espera,
+        // então o primeiro Closing cancela o fechamento, encerra a sessão e fecha de novo.
+        private bool _sessaoEncerrada;
         private string _donoEmail = string.Empty;
         private string _donoPassword = string.Empty;
         private int _redePeriodoDias = 0;
@@ -99,6 +103,14 @@ namespace PdvPadaria
             // Credenciais guardadas em memória só para o painel da rede (RPC exige login do dono).
             _donoEmail = loginEmail;
             _donoPassword = loginPassword;
+
+            // A sessão começa aqui e termina quando esta janela terminar — por logout OU
+            // pelo X. Antes a limpeza morava só no clique do botão Sair, então fechar pela
+            // janela deixava o estado da sessão de pé no processo.
+            _escopo = new EscopoDeSessao(new Sessao(
+                CurrentUser.Id, CurrentUser.Role,
+                StoreIdentityService.Atual(CurrentUser.StoreId ?? string.Empty),
+                CurrentUser.TenantId));
 
             OperatorNameText.Text = CurrentUser.Name;
             CartItemsList.ItemsSource = _cartItems;
@@ -2185,12 +2197,77 @@ namespace PdvPadaria
             }
         }
 
-        private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        private async void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
             if (KioskToggle.IsChecked == true)
             {
                 e.Cancel = true;
                 MessageBox.Show("Desative o Modo Tela Cheia com a senha administrativa para poder fechar o aplicativo.", "Segurança", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (_sessaoEncerrada) return;   // segunda passada: já encerrou, pode fechar
+
+            // Segura o fechamento para subir o que ainda está na fila. O WPF não espera por
+            // método assíncrono aqui, então cancela-se esta passada e fecha-se de novo no fim.
+            e.Cancel = true;
+            if (_encerrandoEmCurso) return; // logout já está encerrando; ele fecha a janela
+            await EncerrarSessaoAsync();
+            Close();
+        }
+
+        /// <summary>
+        /// Fim da sessão, pelos dois caminhos: logout e fechar a janela.
+        ///
+        /// A ordem importa. O envio final acontece ANTES de marcar _encerrando, porque essa
+        /// marca desliga a sincronização — era por isso que o logout nunca empurrava nada,
+        /// só esperava o que já estava em curso.
+        /// </summary>
+        private bool _encerrandoEmCurso;
+
+        private async Task EncerrarSessaoAsync()
+        {
+            // O encerramento leva segundos (envio final). Sem esta trava, um segundo clique
+            // no Sair — ou o X durante o logout — rodaria tudo de novo e abriria duas telas
+            // de login.
+            if (_sessaoEncerrada || _encerrandoEmCurso) return;
+            _encerrandoEmCurso = true;
+
+            _syncTimer?.Stop();
+
+            // Espera venda e sync em curso antes de mexer na identidade desta base SQLite.
+            await _saleGate.WaitAsync();
+            _saleGate.Release();
+            await _syncGate.WaitAsync();
+            _syncGate.Release();
+
+            SyncStatusText.Text = "Enviando o que falta...";
+            var resultado = await _escopo.EncerrarAsync(
+                async () => (await SincronizarDadosNuvem()).Item1,
+                TimeSpan.FromSeconds(10));
+
+            _encerrando = true;
+            _sessaoEncerrada = true;
+
+            if (resultado == ResultadoDoEncerramento.FicouPendente)
+            {
+                int pendentes = 0;
+                try
+                {
+                    pendentes = await App.Database.GetConnection()
+                        .ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Sale WHERE IsSynced = 0");
+                }
+                catch { }
+
+                MessageBox.Show(
+                    (pendentes > 0
+                        ? $"{pendentes} venda(s) ainda não subiram para a nuvem.\n\n"
+                        : "O envio final não completou.\n\n") +
+                    "Nada foi perdido: fica guardado neste computador e sobe sozinho na " +
+                    "próxima vez que o caixa abrir com internet.\n\n" +
+                    "Se este computador for trocado ou formatado antes disso, avise o " +
+                    "responsável antes.",
+                    "Ficou coisa para enviar", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
 
@@ -2202,20 +2279,7 @@ namespace PdvPadaria
                 return;
             }
 
-            _encerrando = true;
-            _syncTimer?.Stop();
-
-            // Espera venda local e sync terminarem antes de outro login poder trocar
-            // a identidade/estoque desta mesma base SQLite.
-            await _saleGate.WaitAsync();
-            _saleGate.Release();
-            await _syncGate.WaitAsync();
-            _syncGate.Release();
-
-            // Só agora, com venda e sincronização paradas, é seguro descartar a identidade
-            // desta sessão. Antes disto o logout trocava a janela e deixava o estado de pé:
-            // o próximo login herdava a loja do anterior sem reconsultar a nuvem.
-            StoreIdentityService.Encerrar();
+            await EncerrarSessaoAsync();
 
             var login = new LoginWindow();
             login.Show();

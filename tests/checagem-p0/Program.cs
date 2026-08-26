@@ -165,6 +165,34 @@ class Program
         escopo.Dispose();
         Checa("Dispose duas vezes nao quebra", escopo.Encerrado);
 
+        Console.WriteLine("\n== etapa 5: encerrar tenta subir o que ficou para tras ==");
+        var limite = TimeSpan.FromMilliseconds(300);
+
+        var esc1 = new EscopoDeSessao(new Sessao("u", "ATENDENTE", "loja-a", "rede-1"));
+        var res1 = await esc1.EncerrarAsync(() => Task.FromResult(true), limite);
+        Checa("envio ok: encerra sem pendencia", res1 == ResultadoDoEncerramento.Enviado && esc1.Encerrado);
+
+        var esc2 = new EscopoDeSessao(new Sessao("u", "ATENDENTE", "loja-a", "rede-1"));
+        var res2 = await esc2.EncerrarAsync(() => Task.FromResult(false), limite);
+        // Falhar em subir NAO pode impedir de fechar -- travaria o caixa sem internet.
+        // Mas o chamador precisa saber, para avisar quem esta fechando.
+        Checa("envio falhou: encerra assim mesmo, mas avisa",
+              res2 == ResultadoDoEncerramento.FicouPendente && esc2.Encerrado);
+
+        var esc3 = new EscopoDeSessao(new Sessao("u", "ATENDENTE", "loja-a", "rede-1"));
+        var relogio = System.Diagnostics.Stopwatch.StartNew();
+        var res3 = await esc3.EncerrarAsync(async () => { await Task.Delay(10000); return true; }, limite);
+        relogio.Stop();
+        Checa("envio pendurado nao trava o fechamento",
+              res3 == ResultadoDoEncerramento.FicouPendente && relogio.ElapsedMilliseconds < 3000,
+              $"levou {relogio.ElapsedMilliseconds}ms");
+        Checa("mesmo estourando o tempo, o escopo e encerrado", esc3.Encerrado);
+
+        var esc4 = new EscopoDeSessao(new Sessao("u", "ATENDENTE", "loja-a", "rede-1"));
+        var res4 = await esc4.EncerrarAsync(() => throw new InvalidOperationException("rede caiu"), limite);
+        Checa("erro no envio nao escapa para quem esta fechando",
+              res4 == ResultadoDoEncerramento.FicouPendente && esc4.Encerrado);
+
         try { Directory.Delete(pastaTeste, true); } catch { }
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;
