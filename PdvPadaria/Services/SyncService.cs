@@ -429,7 +429,7 @@ namespace PdvPadaria.Services
                 // tabelas, cada uma levando o recorte de rede como parâmetro na URL — ou
                 // seja, o recorte era escolha do cliente, e qualquer portador da chave
                 // pública lia todas as redes. Aqui a loja vem do TOKEN, igual à escrita.
-                var cadastros = await ObterCadastrosAsync();
+                var cadastros = await ObterCadastrosAsync(storeId);
 
                 var categories = cadastros?.Categories;
                 var products = cadastros?.Products;
@@ -438,7 +438,10 @@ namespace PdvPadaria.Services
 
                 if (products == null || storeProducts == null || breadConfigs == null)
                 {
-                    LastError = "Falha ao carregar cadastro ou estoque da loja.";
+                    // So preenche se ninguem mais explicou: ObterCadastrosAsync ja pode ter
+                    // posto aqui o motivo real (token vencido, por exemplo), que e acionavel.
+                    if (string.IsNullOrEmpty(LastError))
+                        LastError = "Falha ao carregar cadastro ou estoque da loja.";
                     return false;
                 }
 
@@ -627,7 +630,7 @@ namespace PdvPadaria.Services
         /// qualquer portador da chave pública. Aqui, esquecer não é possível: a loja é
         /// derivada da credencial, do mesmo jeito que já acontece na escrita.
         /// </summary>
-        private async Task<CadastrosDto?> ObterCadastrosAsync()
+        private async Task<CadastrosDto?> ObterCadastrosAsync(string storeIdEsperado)
         {
             try
             {
@@ -663,7 +666,22 @@ namespace PdvPadaria.Services
                     {
                         ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver()
                     };
-                    return JsonConvert.DeserializeObject<CadastrosDto>(corpo, settings);
+                    var cadastros = JsonConvert.DeserializeObject<CadastrosDto>(corpo, settings);
+                    if (cadastros == null) return null;
+
+                    // O servidor devolve a loja que ELE derivou do token. Se nao for a loja
+                    // que este caixa acha que e, os dados sao de outra loja: gravar isso aqui
+                    // escreveria o catalogo e o estoque de uma loja sob o nome de outra --
+                    // exatamente o incidente de 20/08. A resposta ja trazia o dado; faltava
+                    // olhar para ele.
+                    if (!string.Equals(cadastros.StoreId, storeIdEsperado, StringComparison.OrdinalIgnoreCase))
+                    {
+                        LastError = $"A nuvem respondeu pela loja {cadastros.StoreId}, mas este caixa " +
+                                    $"opera como {storeIdEsperado}. Nada foi gravado. Saia e entre de novo.";
+                        return null;
+                    }
+
+                    return cadastros;
                 }
             }
             catch (Exception ex)
@@ -731,13 +749,17 @@ namespace PdvPadaria.Services
     // pela loja do token. Os nomes batem com as colunas do Postgres via camelCase.
     public class CadastrosDto
     {
+        // Sem valor inicial DE PROPOSITO. Lista que ja nasce vazia faz chave ausente ou
+        // renomeada no JSON virar "esta loja nao tem nada" em vez de erro: o pull segue
+        // adiante, o mapa de estoque fica vazio e a semeadura da troca de loja zera o
+        // saldo inteiro achando que confirmou. Nulo aqui e o que deixa a guarda funcionar.
         public string StoreId { get; set; } = string.Empty;
         public string TenantId { get; set; } = string.Empty;
-        public List<Category> Categories { get; set; } = new List<Category>();
-        public List<Product> Products { get; set; } = new List<Product>();
-        public List<StoreProductDto> StoreProducts { get; set; } = new List<StoreProductDto>();
-        public List<BreadConfig> BreadConfigs { get; set; } = new List<BreadConfig>();
-        public List<OwnerStockAdjustmentDto> OwnerAdjustments { get; set; } = new List<OwnerStockAdjustmentDto>();
+        public List<Category>? Categories { get; set; }
+        public List<Product>? Products { get; set; }
+        public List<StoreProductDto>? StoreProducts { get; set; }
+        public List<BreadConfig>? BreadConfigs { get; set; }
+        public List<OwnerStockAdjustmentDto>? OwnerAdjustments { get; set; }
     }
 
     public class OwnerStockAdjustmentDto

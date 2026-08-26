@@ -118,7 +118,11 @@ namespace PdvPadaria.Services
                     return false;
                 }
 
-                var tempPath = Path.Combine(Path.GetTempPath(), "Setup_PadariaVenancio_update.exe");
+                // Nome sorteado: o caminho fixo era previsivel, entao outro processo do mesmo
+                // usuario podia deixar o arquivo pronto (ou trocar depois) e o PDV executaria
+                // ele com o privilegio do instalador.
+                var tempPath = Path.Combine(Path.GetTempPath(),
+                    "PdvUpdate_" + Path.GetRandomFileName() + ".exe");
 
                 using (var response = await _http.GetAsync(info.Url))
                 {
@@ -136,6 +140,17 @@ namespace PdvPadaria.Services
 
                     // File.WriteAllBytesAsync não existe no .NET Framework 4.8.
                     await Task.Run(() => File.WriteAllBytes(tempPath, bytes));
+                }
+
+                // Confere DE NOVO, agora lendo do disco, logo antes de executar. A conferencia
+                // anterior foi sobre os bytes em memoria: entre gravar e rodar ainda cabia uma
+                // troca do arquivo, e era justamente isso que a verificacao existia para impedir.
+                if (!string.Equals(ImpressaoDigital(File.ReadAllBytes(tempPath)),
+                                   info.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    Debug.WriteLine("[UpdateService]: arquivo em disco nao confere; nao sera executado.");
+                    try { File.Delete(tempPath); } catch { }
+                    return false;
                 }
 
                 var psi = new ProcessStartInfo

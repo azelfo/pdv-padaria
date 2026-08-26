@@ -51,8 +51,12 @@ namespace PdvPadaria.Services
         /// <summary>A máquina ainda não tem token nenhum (nem registrado, nem no .env).</summary>
         public static bool TokenAusente { get; private set; }
 
-        private static string PastaDados => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "pdv-padaria");
+        // PDV_DADOS_DIR existe para os testes nao mexerem na identidade real da maquina:
+        // ResolverAsync grava loja-identidade.txt e estoque-loja.txt, e rodar a checagem num
+        // caixa de loja reescrevia esses arquivos. Em producao a variavel nao existe.
+        private static string PastaDados =>
+            Environment.GetEnvironmentVariable("PDV_DADOS_DIR")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "pdv-padaria");
 
         // Loja descoberta pelo token, guardada para o caixa continuar sabendo quem é
         // quando abrir sem internet.

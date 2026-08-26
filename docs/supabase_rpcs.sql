@@ -1433,3 +1433,75 @@ $$;
 REVOKE ALL ON FUNCTION public.push_estoque(JSONB, TEXT)
   FROM PUBLIC, authenticated;
 GRANT EXECUTE ON FUNCTION public.push_estoque(JSONB, TEXT) TO anon;
+
+-- ============================================================
+-- pull_cadastros(p_token)  --  LEITURA RECORTADA PELA CREDENCIAL
+--
+-- Aplicada em 22/08/2026 (migracao pull_cadastros_leitura_pelo_token). Estava so no
+-- banco: o cliente dependia deste contrato e nada no repositorio o fixava, entao uma
+-- edicao pelo painel quebraria o PDV sem diff e sem revisao.
+--
+-- Substitui cinco leituras diretas as tabelas, cujo recorte por rede era um parametro
+-- que o proprio cliente escolhia mandar na URL. Aqui a loja vem do TOKEN, server-side,
+-- igual as escritas. Ver SyncService.ObterCadastrosAsync.
+--
+-- O CLIENTE DEPENDE DE:
+--   * as chaves storeId, tenantId, categories, products, storeProducts, breadConfigs,
+--     ownerAdjustments (CadastrosDto casa por camelCase);
+--   * ownerAdjustments vir ORDENADO por createdAt -- ApplyOwnerAdjustmentsAsync aplica
+--     cada ajuste como saldo ABSOLUTO, entao fora de ordem o saldo final fica errado;
+--   * breadConfigs ja filtrado por active = true -- o caixa apaga as demais linhas da
+--     loja e instala breadConfigs[0];
+--   * products vir com ativos E inativos, para o flag active descer e o produto
+--     excluido na nuvem sumir das telas sem apagar historico local.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION pull_cadastros(p_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_store  TEXT;
+  v_tenant TEXT;
+BEGIN
+  v_store := public.loja_do_token(p_token);
+  IF v_store IS NULL THEN
+    RETURN jsonb_build_object('error', 'invalid_token');
+  END IF;
+
+  SELECT "tenantId" INTO v_tenant
+    FROM public."Store"
+   WHERE id = v_store AND active = true;
+
+  IF v_tenant IS NULL THEN
+    RETURN jsonb_build_object('error', 'invalid_store');
+  END IF;
+
+  RETURN jsonb_build_object(
+    'storeId',  v_store,
+    'tenantId', v_tenant,
+    'categories', coalesce((
+      SELECT jsonb_agg(to_jsonb(c)) FROM public."Category" c WHERE c."tenantId" = v_tenant
+    ), '[]'::jsonb),
+    'products', coalesce((
+      SELECT jsonb_agg(to_jsonb(p)) FROM public."Product" p WHERE p."tenantId" = v_tenant
+    ), '[]'::jsonb),
+    'storeProducts', coalesce((
+      SELECT jsonb_agg(to_jsonb(sp)) FROM public."StoreProduct" sp WHERE sp."storeId" = v_store
+    ), '[]'::jsonb),
+    'breadConfigs', coalesce((
+      SELECT jsonb_agg(to_jsonb(b)) FROM public."BreadConfig" b
+       WHERE b."storeId" = v_store AND b.active = true
+    ), '[]'::jsonb),
+    'ownerAdjustments', coalesce((
+      SELECT jsonb_agg(to_jsonb(o) ORDER BY o."createdAt") FROM public."OwnerStockAdjustment" o
+       WHERE o."storeId" = v_store
+    ), '[]'::jsonb)
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION pull_cadastros(TEXT) TO anon;

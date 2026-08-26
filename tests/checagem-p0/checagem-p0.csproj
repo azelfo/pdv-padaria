@@ -27,11 +27,15 @@
     <Compile Include="..\..\PdvPadaria\Services\UpdateService.cs" />
     <Compile Include="..\..\PdvPadaria\Services\StoreIdentityService.cs" />
     <Compile Include="..\..\PdvPadaria\Services\EnvService.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\SyncService.cs" />
+    <Compile Include="..\..\PdvPadaria\Models\*.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
+    <PackageReference Include="SQLitePCLRaw.bundle_green" Version="2.1.11" />
   </ItemGroup>
 
   <ItemGroup>

@@ -204,7 +204,18 @@ def teste_versao_declara_digital():
     checa("[atualizacao] version.json declara sha256 do instalador", tem, detalhe)
 
 
+def garantir_conexao():
+    """Sem esta checagem a suite MENTE: erro de rede vira status 0, e os testes de
+    vazamento leem 'nao veio linha' como aprovado -- declarando o problema resolvido
+    sem nunca ter falado com o servidor."""
+    status, _ = pedir("/rest/v1/rpc/loja_do_token", {"p_token": "sonda-de-conexao"})
+    if status != 200:
+        sys.exit(f"Sem resposta do Supabase (status {status}). "
+                 f"Nada foi testado -- corrija a conexao e rode de novo.")
+
+
 def main():
+    garantir_conexao()
     for t in (teste_vazamento, teste_nega_por_padrao, teste_recusa_no_corpo,
               teste_leitura_recortada, teste_identidade, teste_instalador,
               teste_versao_declara_digital):
