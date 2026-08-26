@@ -1,6 +1,6 @@
 {
-  "version": "1.1.10",
+  "version": "1.1.11",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "5bbc294cdb513e4d564b600c2e704104af420e9a65eb9288a50bab1285c28091",
-  "notes": "Correcao no cancelamento de venda. O botao Cancelar aparecia tambem quando a venda era aberta pela lista da nuvem, inclusive em venda de outra loja - e ali o clique nao fazia nada: o aviso dizia que o estoque seria devolvido, o operador confirmava e nada acontecia, sem nenhuma mensagem. Agora o botao so aparece quando a venda e desta loja, que e a unica que pode devolver o estoque dela; nos outros casos o caixa explica na tela em vez de ficar calado. O botao tambem fica desligado enquanto o estorno esta sendo feito, para um clique duplo nao devolver o estoque duas vezes. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
+  "sha256": "391b0766903626badeae0d8c329ebc15c138538f50d617efb6ba7377a37435c1",
+  "notes": "Correcoes de robustez encontradas em revisao de codigo. A protecao que impede o caixa de gravar dados vindos errados da nuvem nao estava funcionando de fato - numa resposta fora do formato ele entendia 'esta loja nao tem nada' e, durante uma troca de loja, isso zerava o estoque dando a operacao por concluida. Agora ele recusa e nao grava nada. O caixa tambem passou a conferir se a loja que a nuvem respondeu e a mesma que ele opera, e a atualizacao confere o instalador uma segunda vez, ja no disco, antes de executar. O botao de cancelar venda ficou coerente nas duas telas, e o aviso de credencial recusada nao some mais ao sair e entrar sem internet. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
 }
