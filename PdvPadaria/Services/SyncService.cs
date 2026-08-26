@@ -95,6 +95,12 @@ namespace PdvPadaria.Services
                        "O caixa renova a credencial sozinho.";
             }
 
+            if (codigo == "venda_de_outra_loja")
+                return "Ha venda na fila que foi feita em OUTRA loja. Ela nao pode subir " +
+                       "enquanto este caixa estiver operando pela loja atual — subiria " +
+                       "carimbada na loja errada. Entre com o usuario da loja onde essa " +
+                       "venda foi feita para ela subir, e depois volte.";
+
             if (!string.IsNullOrEmpty(codigo))
                 return $"A nuvem recusou o envio: {codigo}";
 

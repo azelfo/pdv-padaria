@@ -126,6 +126,36 @@ class Program
             Checa("nada foi gravado no banco", prod == 0, $"{prod} produto(s) gravados");
         }
 
+        Console.WriteLine("\n== venda da fila nao troca de loja no caminho ==");
+        // Venda feita OFFLINE numa loja, que sobe depois que a maquina passou a operar por
+        // OUTRA, virava venda da segunda loja em silencio: o servidor carimbava o storeId a
+        // partir do token. Medido em 26/08 -- venda da Centro chegou como Japao.
+        // Agora e recusada e fica na fila ate a maquina voltar a ser a loja dela.
+        // Este teste nunca grava na nuvem: o envio e rejeitado antes disso.
+        const string OUTRA_LOJA = "e33ec1a1-a041-4fae-aefa-625bc518772f";
+        using (var c = new SQLite.SQLiteConnection(db))
+        {
+            c.Execute("DELETE FROM Sale");
+            c.Insert(new PdvPadaria.Models.Sale {
+                Id = "checagem-outra-loja", StoreId = OUTRA_LOJA,
+                TenantId = "927cfa8e-655a-4307-a50a-806c72d99e4f", UserId = "u",
+                SaleDate = DateTime.Now, Subtotal = 1, Total = 1,
+                PaymentMethod = "DINHEIRO", PaymentStatus = "APROVADO", IsSynced = false });
+        }
+        using (var conn = new SQLite.SQLiteConnection(db))
+        using (var sync = new SyncService(conn, new Sessao("u", "ATENDENTE", OUTRA_LOJA, "t")))
+        {
+            bool subiu = await sync.PushSalesAsync("t", OUTRA_LOJA);
+            Checa("venda de outra loja e recusada", !subiu,
+                  "subiu carimbada na loja errada");
+            Checa("a recusa explica o que fazer", sync.LastError.Contains("OUTRA loja"),
+                  sync.LastError);
+        }
+        using (var c = new SQLite.SQLiteConnection(db))
+            Checa("a venda continua na fila",
+                  c.ExecuteScalar<int>("SELECT COUNT(*) FROM Sale WHERE IsSynced=0") == 1,
+                  "venda sumiu da fila sem ter subido");
+
         Console.WriteLine("\n== token recusado continua recusado depois do logout ==");
         StoreIdentityService.Encerrar();
         File.WriteAllText(Path.Combine(pastaTeste, "caixa-token.dat"), "token-que-nao-existe");

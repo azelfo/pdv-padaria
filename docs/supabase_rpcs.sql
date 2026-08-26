@@ -1505,3 +1505,33 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION pull_cadastros(TEXT) TO anon;
+
+-- ============================================================
+-- push_vendas: VENDA DA FILA NAO TROCA DE LOJA NO CAMINHO
+--
+-- Aplicada em 26/08/2026 (migracao push_vendas_recusa_venda_de_outra_loja).
+--
+-- push_vendas sempre carimbou storeId a partir do token, sobrescrevendo o que o
+-- cliente mandava. Isso fecha o IDOR, mas abre um caso pior: venda feita OFFLINE na
+-- loja A, que fica na fila do PC e sobe depois que a maquina passou a operar como
+-- loja B, virava venda da loja B -- calada.
+--
+-- Reproduzido em 26/08: venda gravada com o storeId da Padaria Centro chegou na
+-- nuvem como Padaria Japao, porque o token da maquina ja era o da Japao.
+--
+-- A guarda invalid_scope nao pega isso: ela compara com a linha que JA existe na
+-- nuvem, e venda nova nao tem com o que comparar.
+--
+-- REGRA ATUAL
+--   storeId declarado e DIFERENTE do token  -> recusa o lote (venda_de_outra_loja)
+--   storeId ausente ou vazio                -> o token manda, como antes
+--
+-- O segundo caso existe para nao prender para sempre linhas antigas ou gravadas
+-- antes da identidade resolver. Recusar em vez de reescrever troca corrupcao
+-- silenciosa por fila parada -- visivel e reversivel: basta entrar com o usuario da
+-- loja onde a venda foi feita.
+--
+-- A migracao reescreveu a definicao VIVA (pg_get_functiondef + replace) em vez de
+-- redigitar a funcao inteira, para nao perder nenhuma regra existente na
+-- transcricao. Se a ancora sumir, ela aborta sem alterar nada.
+-- ============================================================
