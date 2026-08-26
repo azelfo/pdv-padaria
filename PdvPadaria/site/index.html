@@ -173,7 +173,19 @@
       Baixar instalador
     </a>
 
-    <p class="meta">Versão 1.1.0 &middot; Windows &middot; 3,8 MB</p>
+    <!-- A versão é lida do mesmo version.json que o PDV consulta para se atualizar.
+         Antes era escrita à mão aqui e ficou 10 lançamentos para trás, anunciando 1.1.0
+         enquanto o arquivo servido já era outro. O texto abaixo é só o valor de reserva
+         para quando o fetch não completa. -->
+    <p class="meta"><span id="versao">Versão 1.1.10</span> &middot; Windows</p>
+    <script>
+      fetch("https://raw.githubusercontent.com/azelfo/pdv-padaria/main/docs/version.json")
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.version) document.getElementById("versao").textContent = "Versão " + d.version;
+        })
+        .catch(function () { /* mantém o valor de reserva */ });
+    </script>
 
     <!-- Windows 7 / 8.1 precisam instalar o .NET Framework antes. O instalador do PDV
          não consegue baixá-lo sozinho nessas versões (elas usam TLS 1.0 e o site da
