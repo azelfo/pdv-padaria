@@ -126,6 +126,7 @@ namespace PdvPadaria.Services
         {
             if (string.IsNullOrEmpty(_supabaseUrl) || string.IsNullOrEmpty(_supabaseAnonKey))
             {
+                LastError = "Faltam SUPABASE_URL ou SUPABASE_ANON_KEY no arquivo .env desta maquina.";
                 System.Diagnostics.Debug.WriteLine("[Push Error]: Credenciais do Supabase ausentes no .env");
                 return false;
             }
@@ -204,6 +205,9 @@ namespace PdvPadaria.Services
             }
             catch (Exception ex)
             {
+                // Sem isto o caixa mostrava "Falha na sincronizacao:" e nada depois: erro
+                // sem motivo, que nao da ao operador nem como descrever o que aconteceu.
+                if (string.IsNullOrEmpty(LastError)) LastError = ex.Message;
                 System.Diagnostics.Debug.WriteLine($"[Push Error]: {ex.Message}");
                 return false;
             }

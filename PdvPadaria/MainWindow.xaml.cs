@@ -4342,7 +4342,15 @@ namespace PdvPadaria
                 SyncStatusIndicator.Fill = System.Windows.Media.Brushes.Red;
                 
                 // Exibe erro detalhado para ajudar no debug
-                MessageBox.Show($"Falha na sincronização:\n{error}", "Erro de Sincronização", MessageBoxButton.OK, MessageBoxImage.Warning);
+                // Rede de segurança: se nenhuma camada explicou o motivo, o operador ainda
+                // recebe algo acionável em vez de um aviso vazio.
+                MessageBox.Show(
+                    "Falha na sincronização:\n" +
+                    (string.IsNullOrWhiteSpace(error)
+                        ? "Não foi possível falar com a nuvem. Confira a internet e tente de novo.\n\n" +
+                          "As vendas continuam guardadas neste computador e sobem sozinhas quando a conexão voltar."
+                        : error),
+                    "Erro de Sincronização", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             SyncButton.IsEnabled = true;
             SyncButton.Content = "Sincronizar Agora";
