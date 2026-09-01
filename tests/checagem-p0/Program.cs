@@ -161,6 +161,12 @@ class Program
         File.WriteAllText(Path.Combine(pastaTeste, "caixa-token.dat"), "token-que-nao-existe");
         await StoreIdentityService.ResolverAsync(string.Empty);
         Checa("nuvem recusou o token", StoreIdentityService.TokenInvalido, "nao marcou como invalido");
+        // Enquanto o arquivo morto ficava no disco, TokenAtual() o devolvia sempre e
+        // encobria o STORE_SYNC_TOKEN do .env -- a maquina travava num token recusado
+        // tendo um valido do lado.
+        Checa("o token recusado e apagado do disco",
+              !File.Exists(Path.Combine(pastaTeste, "caixa-token.dat")),
+              "arquivo morto continua encobrindo o token de reserva");
         StoreIdentityService.Encerrar();
         // Sair do sistema não conserta credencial recusada. Zerar o veredito aqui fazia o
         // aviso sumir num logout+login sem internet, e o caixa voltava a operar calado.

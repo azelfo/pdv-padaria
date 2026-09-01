@@ -207,6 +207,12 @@ namespace PdvPadaria.Services
                 // A nuvem respondeu e não reconheceu o token: nada que este caixa gravar
                 // vai subir. O estoque local continua certo e as vendas ficam na fila.
                 TokenInvalido = true;
+
+                // Descarta o arquivo morto. Enquanto ele existia, TokenAtual() o devolvia
+                // sempre — encobrindo o STORE_SYNC_TOKEN do .env, que podia estar bom. A
+                // máquina ficava travada num token recusado tendo um válido do lado.
+                // Apagar é seguro: ele já não vale para nada.
+                try { if (File.Exists(CaminhoToken)) File.Delete(CaminhoToken); } catch { }
             }
 
             _storeId = Atual(fallback);
