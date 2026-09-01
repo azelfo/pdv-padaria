@@ -1,6 +1,6 @@
 {
-  "version": "1.1.12",
+  "version": "1.1.13",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "32fe754820030b0aeac8195ca0dd7444d119b9c0585d50e28e2e255d6ed6966a",
-  "notes": "Sair do sistema e fechar o programa passaram a enviar o que ainda esta na fila antes de encerrar - antes nenhum dos dois enviava nada, e a venda so subia na proxima abertura. Se nao der para enviar, o caixa fecha do mesmo jeito em ate dez segundos e avisa quantas vendas ficaram, em vez de travar sem internet. Fechar pelo X agora encerra a sessao igual ao botao Sair, entao entrar com outro usuario nao aproveita mais nada da sessao anterior. E uma venda feita sem internet numa loja nao pode mais subir carimbada em outra loja: se a maquina tiver trocado de loja no meio, o envio e recusado e a venda espera, em vez de ir para o lugar errado calada. Esta atualizacao NAO apaga nada e NAO altera a configuracao da loja."
+  "sha256": "50b9b3be83a4ed28da70a27d7b6bfffb63672f8dfc6846998c60dfd668195cdb",
+  "notes": "Corrige o caixa ficar preso num acesso recusado. Quando a nuvem recusava a credencial da maquina, o caixa continuava tentando com ela e ignorava a credencial de reserva que estava disponivel - ficava sem sincronizar sem motivo aparente. Agora a credencial recusada e descartada na hora e o caixa volta a sincronizar sozinho. Se mesmo assim ele avisar que nao esta ligado a nenhuma loja, basta entrar uma vez com o usuario daquela loja, com internet: a credencial nova sai sozinha, sem instalar nem configurar nada. Junto: mensagens de falha de sincronizacao que apareciam em branco agora dizem o motivo. Esta atualizacao NAO apaga nada e NAO altera produtos, estoque nem cadastros."
 }
