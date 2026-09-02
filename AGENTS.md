@@ -25,6 +25,10 @@ This repository is a **WPF desktop application** (C#, `.NET Framework 4.8`) livi
   Cutover is two-phase and **phase 2 is still pending**: the `anon_read` policies on `Product`, `Category`, `StoreProduct`, `BreadConfig` and `OwnerStockAdjustment` stay until every caixa runs 1.1.9+, because older clients still read the tables. Confirm via API logs (no more `GET /rest/v1/Product`, only `POST /rest/v1/rpc/pull_cadastros`), then drop them. `tests/testes_api.py` fails on exactly those five until it is done.
 - **Sync RPCs refuse with HTTP 200.** `push_vendas` / `push_estoque` return `{"error": "..."}` as a normal result, so the status code is 200 either way. Always require a valid JSON success body and read `error` (`SyncService.ErroDaResposta`) — trusting the status made the PDV mark unsent sales as synced and drop them. Version 1.1.7 is a compatibility release and still uses the legacy absolute stock snapshot; the movement-ledger cutover must not be activated until every old client has been drained.
 
+## Published site
+
+GitHub Pages serves `docs/` only. `docs/index.html` is the owner panel (Painel da Rede), `docs/baixar.html` is the installer download page, and `docs/version.json` is what the running caixa polls to auto-update — the page reads its version number from that same file, so it can never announce a version that is not served. The download page used to live in `PdvPadaria/site/`, published nowhere; it matters now because the update check is the repair path and a machine that cannot log in cannot reach it.
+
 ## Build
 
 `dotnet` is at `C:\Program Files\dotnet\dotnet.exe` (not on PATH in bash).
