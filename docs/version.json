@@ -1,6 +1,6 @@
 {
-  "version": "1.1.13",
+  "version": "1.1.14",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "50b9b3be83a4ed28da70a27d7b6bfffb63672f8dfc6846998c60dfd668195cdb",
-  "notes": "Corrige o caixa ficar preso num acesso recusado. Quando a nuvem recusava a credencial da maquina, o caixa continuava tentando com ela e ignorava a credencial de reserva que estava disponivel - ficava sem sincronizar sem motivo aparente. Agora a credencial recusada e descartada na hora e o caixa volta a sincronizar sozinho. Se mesmo assim ele avisar que nao esta ligado a nenhuma loja, basta entrar uma vez com o usuario daquela loja, com internet: a credencial nova sai sozinha, sem instalar nem configurar nada. Junto: mensagens de falha de sincronizacao que apareciam em branco agora dizem o motivo. Esta atualizacao NAO apaga nada e NAO altera produtos, estoque nem cadastros."
+  "sha256": "e8b96bd40c9d85a0b86f6a6cc8fd45b0e034bc7a41335115e4487f1e513b1981",
+  "notes": "Corrige o caixa que abria com a mensagem 'Configuracao da nuvem ausente no .env' e nao conseguia entrar nem sincronizar. O endereco da nuvem agora ja vem dentro do programa, entao a maquina fala com o servidor mesmo que o arquivo de configuracao esteja em branco - e as maquinas que ja estavam nesse estado se consertam sozinhas com esta atualizacao, sem precisar reinstalar nem digitar nada. Se o arquivo tiver algo escrito, ele continua valendo. Esta atualizacao NAO apaga nada e NAO altera produtos, estoque nem cadastros."
 }

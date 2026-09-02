@@ -265,6 +265,37 @@ class Program
         Checa("a releitura nao perde nada", urlDepois == urlAntes,
               "caixa abriria a sessao seguinte sem saber falar com a nuvem");
 
+        Console.WriteLine("\n== etapa 7: caixa com .env em branco ainda fala com a nuvem ==");
+
+        // O instalador so grava o .env se ainda nao houver um. Uma maquina instalada com o
+        // arquivo em branco ficava em branco para sempre -- "Configuracao da nuvem ausente
+        // no .env" no login e na sincronizacao -- e atualizar nao consertava.
+        Checa("endereco da nuvem vem embutido",
+              EnvService.PadraoEmbutido("SUPABASE_URL").StartsWith("https://"),
+              "instalacao nova nasce sem saber falar com a nuvem");
+        Checa("chave publica vem embutida",
+              EnvService.PadraoEmbutido("SUPABASE_ANON_KEY").StartsWith("eyJ"),
+              "instalacao nova nasce sem credencial de leitura");
+
+        // O segredo de escrita nunca pode estar embutido: ele ja vazou uma vez num
+        // repositorio publico e foi preciso trocar o token das tres lojas.
+        Checa("o segredo de escrita NAO vem embutido",
+              EnvService.PadraoEmbutido("STORE_SYNC_TOKEN") == "",
+              "credencial de escrita seria distribuida no instalador");
+        Checa("a loja NAO vem embutida",
+              EnvService.PadraoEmbutido("STORE_ID") == "",
+              "toda maquina nasceria carimbada como a mesma loja");
+
+        // O que estiver escrito no .env continua mandando -- senao uma maquina apontada
+        // para outro servidor passaria a falar com este sem ninguem perceber.
+        string urlDoArquivo = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, ".env"))
+            .Where(l => l.TrimStart().StartsWith("SUPABASE_URL="))
+            .Select(l => l.Split(new[] { '=' }, 2)[1].Trim().Trim('"'))
+            .FirstOrDefault() ?? "";
+        Checa("valor escrito no .env vence o embutido",
+              urlDoArquivo != "" && EnvService.Get("SUPABASE_URL") == urlDoArquivo,
+              "o .env da maquina foi ignorado");
+
         try { Directory.Delete(pastaTeste, true); } catch { }
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;

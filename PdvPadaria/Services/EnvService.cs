@@ -9,6 +9,32 @@ namespace PdvPadaria.Services
         private static readonly Dictionary<string, string> _envVars = new Dictionary<string, string>();
         private static bool _loaded = false;
 
+        // O que a maquina ja sabe sem precisar de arquivo nenhum.
+        //
+        // O instalador so grava o .env se ainda NAO houver um (onlyifdoesntexist, e tem de
+        // continuar assim: senao toda atualizacao apagaria a configuracao da loja). O efeito
+        // colateral era mortal -- um caixa instalado com o arquivo em branco ficava em branco
+        // para sempre, dando "Configuracao da nuvem ausente no .env" no login e na
+        // sincronizacao, e nenhuma atualizacao consertava porque o arquivo ja existia.
+        //
+        // Estes dois valores nao sao segredo: a chave "anon" e publicavel por design e o
+        // Painel da Rede ja a expoe na web. Quem protege os dados e a politica de acesso do
+        // servidor, nao o sigilo dela. O que E segredo -- STORE_SYNC_TOKEN, a credencial de
+        // ESCRITA -- fica de fora de proposito: ja vazou uma vez num repositorio publico e
+        // foi preciso trocar o token das tres lojas. STORE_ID tambem fica de fora, senao
+        // toda maquina nasceria carimbada como a mesma loja.
+        private static readonly Dictionary<string, string> _padrao = new Dictionary<string, string>
+        {
+            { "SUPABASE_URL", "https://aezwtbzyremthqdkldzl.supabase.co" },
+            { "SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlend0Ynp5cmVtdGhxZGtsZHpsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0NDI4NjEsImV4cCI6MjA5NzAxODg2MX0.kShlLQFGG8PeMpBPbB0Lfbu4bbB-pMdqNO-yOWej1us" }
+        };
+
+        /// <summary>
+        /// Valor de fabrica da chave, ou vazio se ela nao tiver um.
+        /// </summary>
+        public static string PadraoEmbutido(string key) =>
+            _padrao.TryGetValue(key, out string? v) ? v : "";
+
         /// <summary>
         /// Quantas vezes o arquivo foi lido de verdade. Existe para o teste conseguir
         /// distinguir "releu" de "continuou em cache" -- sem isso a checagem passaria
@@ -105,7 +131,10 @@ namespace PdvPadaria.Services
             Load();
             if (_envVars.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value))
                 return value;
-            return defaultValue;
+            // O .env manda: so caimos no valor de fabrica quando nao ha nada escrito.
+            if (!string.IsNullOrEmpty(defaultValue))
+                return defaultValue;
+            return PadraoEmbutido(key);
         }
     }
 }
