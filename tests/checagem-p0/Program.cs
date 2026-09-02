@@ -296,6 +296,34 @@ class Program
               urlDoArquivo != "" && EnvService.Get("SUPABASE_URL") == urlDoArquivo,
               "o .env da maquina foi ignorado");
 
+        Console.WriteLine("\n== etapa 8: o caminho do conserto nao depende do que esta quebrado ==");
+
+        // A checagem de atualizacao mora dentro do MainWindow, que so abre depois do login.
+        // Se ela ficar atras da identidade ou da primeira sincronizacao, uma maquina mal
+        // configurada perde a unica via de receber a correcao -- fica sem conserto remoto.
+        var raiz = new DirectoryInfo(AppContext.BaseDirectory);
+        while (raiz != null && !File.Exists(Path.Combine(raiz.FullName, "PdvPadaria", "MainWindow.xaml.cs")))
+            raiz = raiz.Parent;
+        Checa("MainWindow.xaml.cs encontrado", raiz != null, "nao deu para conferir a ordem");
+        if (raiz != null)
+        {
+            string fonte = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "MainWindow.xaml.cs"));
+            int ini = fonte.IndexOf("private async void Window_Loaded");
+            int fim = fonte.IndexOf("\n        private ", ini + 1);
+            string corpo = fonte.Substring(ini, fim - ini);
+
+            int atualizacao = corpo.IndexOf("CheckForUpdateAsync()");
+            int sincronizacao = corpo.IndexOf("RunSincronizacaoSilenciosa()");
+            int identidade = corpo.IndexOf("StoreIdentityService.ResolverAsync");
+
+            Checa("procurar atualizacao vem antes da sincronizacao",
+                  atualizacao >= 0 && sincronizacao > atualizacao,
+                  "uma falha de sincronizacao impediria a maquina de se consertar");
+            Checa("procurar atualizacao vem antes de resolver a identidade",
+                  atualizacao >= 0 && identidade > atualizacao,
+                  "um token recusado impediria a maquina de se consertar");
+        }
+
         try { Directory.Delete(pastaTeste, true); } catch { }
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;

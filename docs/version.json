@@ -1,6 +1,6 @@
 {
-  "version": "1.1.14",
+  "version": "1.1.15",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "e8b96bd40c9d85a0b86f6a6cc8fd45b0e034bc7a41335115e4487f1e513b1981",
-  "notes": "Corrige o caixa que abria com a mensagem 'Configuracao da nuvem ausente no .env' e nao conseguia entrar nem sincronizar. O endereco da nuvem agora ja vem dentro do programa, entao a maquina fala com o servidor mesmo que o arquivo de configuracao esteja em branco - e as maquinas que ja estavam nesse estado se consertam sozinhas com esta atualizacao, sem precisar reinstalar nem digitar nada. Se o arquivo tiver algo escrito, ele continua valendo. Esta atualizacao NAO apaga nada e NAO altera produtos, estoque nem cadastros."
+  "sha256": "13fa345f39eac7b69bcc0ee7243909c888684c181b45466803526fe7980ef96d",
+  "notes": "Inclui a correcao da versao 1.1.14: o caixa que abria com 'Configuracao da nuvem ausente no .env' e nao conseguia entrar nem sincronizar volta a funcionar sozinho, porque o endereco da nuvem agora ja vem dentro do programa. Nesta versao, a procura por atualizacao passou a acontecer antes de qualquer outra coisa na abertura. Antes ela vinha depois da identificacao da loja e da primeira sincronizacao, entao uma maquina com problema justamente nessas etapas deixava de receber a correcao que a consertaria. Agora a atualizacao chega mesmo numa maquina mal configurada. Esta atualizacao NAO apaga nada e NAO altera produtos, estoque nem cadastros."
 }

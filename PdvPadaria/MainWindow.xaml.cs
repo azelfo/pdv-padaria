@@ -282,6 +282,16 @@ namespace PdvPadaria
             DashStartDatePicker.SelectedDate = DateTime.Today;
             DashEndDatePicker.SelectedDate = DateTime.Today;
 
+            // A checagem de atualização vem ANTES de tudo que pode falhar.
+            //
+            // Ela roda em background (não atrasa a abertura) e só age se o operador aceitar.
+            // Estava depois da identidade e da primeira sincronização, e isso a tornava
+            // refém delas: numa máquina mal configurada — .env em branco, token recusado —
+            // qualquer erro ali impedia a checagem de acontecer, e a máquina deixava de
+            // receber justamente a correção que a consertaria. O caminho do conserto não
+            // pode depender do que está quebrado.
+            _ = CheckForUpdateAsync();
+
             // Inicializa e agenda a sincronização periódica a cada 60 segundos (1 minuto)
             _syncTimer = new DispatcherTimer();
             _syncTimer.Interval = TimeSpan.FromSeconds(60);
@@ -296,9 +306,6 @@ namespace PdvPadaria
 
             // Roda a primeira sincronização assim que abre
             await RunSincronizacaoSilenciosa();
-
-            // Checagem de atualização em background — não atrasa a abertura do caixa.
-            _ = CheckForUpdateAsync();
         }
 
         // Avisa o operador, em português claro, quando a configuração desta máquina está
