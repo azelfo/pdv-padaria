@@ -156,6 +156,8 @@ namespace PdvPadaria.Views
 
                 if (trocoCentavos >= 0)
                 {
+                    MostrarPainelTroco(sucesso: true);
+                    TrocoLabel.Text = "Troco a Devolver:";
                     TrocoText.Text = $"R$ {trocoCentavos / 100.0:F2}";
                     FinishCashBtn.IsEnabled = true;
                     ReceivedAmountCentavos = receivedCentavos;
@@ -163,15 +165,35 @@ namespace PdvPadaria.Views
                 }
                 else
                 {
-                    TrocoText.Text = "R$ 0,00";
+                    // Antes mostrava "R$ 0,00" aqui — o MESMO texto do caso em que o cliente
+                    // pagou certo e a venda PODE fechar. Duas situações opostas com o mesmo
+                    // número, na mesma caixa verde de sucesso; a única diferença real estava
+                    // no botão, que o operador não olha. Quem digitou errado (2 em vez de 20)
+                    // lia "troco zero", entendia que estava tudo certo e entregava a mercadoria.
+                    MostrarPainelTroco(sucesso: false);
+                    TrocoLabel.Text = "Falta receber:";
+                    TrocoText.Text = $"R$ {-trocoCentavos / 100.0:F2}";
                     FinishCashBtn.IsEnabled = false;
                 }
             }
             else
             {
+                MostrarPainelTroco(sucesso: false);
+                TrocoLabel.Text = "Troco a Devolver:";
                 TrocoText.Text = "R$ 0,00";
                 FinishCashBtn.IsEnabled = false;
             }
+        }
+
+        // Alterna o painel entre "pode fechar" (verde) e "não pode fechar" (vermelho) —
+        // ver o comentário acima sobre os dois casos que antes mostravam o mesmo texto.
+        private void MostrarPainelTroco(bool sucesso)
+        {
+            TrocoPanel.Background = sucesso
+                ? (System.Windows.Media.Brush)FindResource("SuccessTint")
+                : (System.Windows.Media.Brush)FindResource("DangerTint");
+            TrocoPanel.BorderBrush = (System.Windows.Media.Brush)FindResource(sucesso ? "Success" : "Danger");
+            TrocoLabel.Foreground = (System.Windows.Media.Brush)FindResource(sucesso ? "Success" : "Danger");
         }
 
         private void FinishCashBtn_Click(object sender, RoutedEventArgs e)

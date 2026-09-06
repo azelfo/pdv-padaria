@@ -347,7 +347,12 @@ namespace PdvPadaria.Views
 
         private void PasswordInput_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Enter)
+            // O campo de senha continua ATIVO enquanto o botão diz "Entrando..." (só o botão
+            // é desabilitado). Internet lenta = alguns segundos sem nada acontecer na tela, e
+            // é comum apertar Enter de novo — o que iniciava um SEGUNDO login por baixo: duas
+            // chamadas de registro da máquina (a segunda revoga o token que a primeira acabou
+            // de criar) e duas janelas de caixa abertas, cada uma com seu próprio carrinho.
+            if (e.Key == Key.Enter && LoginButton.IsEnabled)
             {
                 LoginButton_Click(this, new RoutedEventArgs());
             }

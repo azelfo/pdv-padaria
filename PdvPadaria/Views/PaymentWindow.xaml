@@ -125,9 +125,9 @@
                                  TextChanged="CashReceivedInput_TextChanged"/>
                         
                         <!-- Painel Troco -->
-                        <Border Background="#1a10b981" BorderBrush="{StaticResource Success}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,15,0,20">
+                        <Border x:Name="TrocoPanel" Background="{StaticResource SuccessTint}" BorderBrush="{StaticResource Success}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,15,0,20">
                             <Grid>
-                                <TextBlock Text="Troco a Devolver:" Foreground="{StaticResource Success}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="TrocoLabel" Text="Troco a Devolver:" Foreground="{StaticResource Success}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="TrocoText" Text="R$ 0,00" Foreground="{StaticResource TextPrimary}" FontSize="28" FontWeight="Black" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                             </Grid>
                         </Border>
@@ -144,8 +144,36 @@
                                 Cursor="Hand" 
                                 Click="FinishCashBtn_Click">
                             <Button.Style>
+                                <!-- Um Style local (mesmo sem x:Key) sempre vence o implícito de App.xaml, e
+                                     este não trazia Template — então ficava preso no chrome padrão do Windows,
+                                     que pinta azul-claro no hover por cima do Foreground="White" declarado
+                                     acima: o texto "FINALIZAR VENDA" sumia justo na hora de clicar, no botão
+                                     que fecha a venda. Ganha o Template do implícito (Border + opacidade),
+                                     mantendo a troca de cor no desabilitado que já existia aqui. -->
                                 <Style TargetType="Button">
                                     <Setter Property="Background" Value="{StaticResource Success}"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="Bd"
+                                                        Background="{TemplateBinding Background}"
+                                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                                        CornerRadius="{StaticResource RadiusSm}"
+                                                        Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsPressed" Value="True">
+                                                        <Setter TargetName="Bd" Property="Opacity" Value="0.7"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
                                     <Style.Triggers>
                                         <Trigger Property="IsEnabled" Value="False">
                                             <Setter Property="Background" Value="{StaticResource BorderStrong}"/>

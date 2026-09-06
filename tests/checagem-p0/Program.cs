@@ -324,6 +324,149 @@ class Program
                   "um token recusado impediria a maquina de se consertar");
         }
 
+        Console.WriteLine("\n== etapa 9: a linha do carrinho acompanha o que foi cobrado ==");
+
+        // Reatribuir o mesmo objeto no mesmo indice (_cartItems[i] = item) NAO redesenha nada:
+        // para o WPF o DataContext da linha continua sendo o mesmo objeto. Como o total e
+        // escrito direto em TotalText.Text, a tela se contradizia -- linha "1 UN", total
+        // cobrando por 2 -- e o operador clicava de novo, cobrando o cliente a mais.
+        if (raiz != null)
+        {
+            string cs = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "MainWindow.xaml.cs"));
+            string xaml = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "MainWindow.xaml"));
+
+            Checa("ninguem mais reatribui o item no mesmo indice",
+                  !cs.Contains("_cartItems[index] ="),
+                  "voltou o padrao que cobra sem mostrar");
+            Checa("existe um unico jeito de redesenhar o carrinho",
+                  cs.Contains("private void RedesenharCarrinho() => CartItemsList.Items.Refresh();"),
+                  "o redesenho do carrinho sumiu ou mudou de forma");
+
+            // Toda mutacao de item ja no carrinho tem de terminar em redesenho.
+            int mutacoes = System.Text.RegularExpressions.Regex.Matches(cs, @"\.Quantity (\+|-)= ").Count;
+            int redesenhos = System.Text.RegularExpressions.Regex.Matches(cs, @"RedesenharCarrinho\(\);").Count;
+            Checa("cada mudanca de quantidade avisa a tela",
+                  redesenhos >= mutacoes,
+                  $"{mutacoes} mudancas de quantidade para {redesenhos} redesenhos");
+
+            // Sem Style proprio, o botao cai no template padrao do Windows: no hover ele pinta
+            // azul-claro e o simbolo quase branco some -- some justo na hora de clicar.
+            foreach (var clique in new[] { "IncreaseQuantity_Click", "DecreaseQuantity_Click" })
+            {
+                int i = xaml.IndexOf(clique);
+                int abre = i < 0 ? -1 : xaml.LastIndexOf("<Button", i);
+                string tag = (i < 0 || abre < 0) ? "" : xaml.Substring(abre, i - abre);
+                Checa($"botao {(clique[0] == 'I' ? "+" : "-")} nao usa o template do Windows",
+                      tag.Contains("Style=\"{StaticResource"),
+                      "o botao some no azul-claro do hover");
+            }
+        }
+
+        Console.WriteLine("\n== etapa 10: recusar a venda ANTES de o dinheiro entrar ==");
+
+        // A conferencia de estoque rodava so na hora de gravar -- depois de o operador
+        // escolher a forma de pagamento, receber o dinheiro e anunciar o troco. A recusa
+        // chegava com o dinheiro na mao e a venda nao era gravada.
+        if (raiz != null)
+        {
+            string cs = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "MainWindow.xaml.cs"));
+
+            int ini = cs.IndexOf("private async void AbrirModalPagamento");
+            int fim = ini < 0 ? -1 : cs.IndexOf("\n        private ", ini + 1);
+            string corpo = (ini < 0 || fim < 0) ? "" : cs.Substring(ini, fim - ini);
+
+            int confere = corpo.IndexOf("EstoqueDoCarrinhoConfereAsync");
+            int cobra = corpo.IndexOf("ShowDialog()");
+            Checa("a conferencia de estoque vem antes da tela de pagamento",
+                  confere >= 0 && cobra > confere,
+                  "a venda voltaria a ser recusada com o dinheiro ja recebido");
+            Checa("F12 apertado duas vezes nao abre dois pagamentos",
+                  corpo.Contains("_abrindoPagamento"),
+                  "a espera pela consulta ao banco virou brecha para dois pagamentos");
+            Checa("gravar ainda reconfere (o outro caixa pode ter vendido)",
+                  System.Text.RegularExpressions.Regex.Matches(cs, "EstoqueDoCarrinhoConfereAsync\\(\\)").Count >= 3,
+                  "sobrou so uma conferencia; a corrida entre dois caixas volta");
+
+            // O catalogo em memoria alimenta a trava da entrada do carrinho. Se ele nao for
+            // descartado, a venda seguinte e conferida contra o estoque de antes da anterior.
+            Checa("a venda descarta o catalogo em memoria",
+                  cs.Contains("_catalogoBusca.Clear();"),
+                  "a proxima venda usaria o estoque de antes desta");
+        }
+
+        Console.WriteLine("\n== etapa 11: auditoria de tela-mentindo — segundo lote ==");
+
+        // Auditoria multi-agente (12 agentes, 47 achados confirmados, 16 refutados por
+        // caminho impossivel) sobre o resto do app. Estas checagens cobrem so os achados
+        // REAIS e de maior gravidade que foram corrigidos nesta rodada.
+        if (raiz != null)
+        {
+            string mw = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "MainWindow.xaml.cs"));
+            string appXaml = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "App.xaml"));
+            string loginCs = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "Views", "LoginWindow.xaml.cs"));
+            string payCs = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "Views", "PaymentWindow.xaml.cs"));
+            string payXaml = File.ReadAllText(Path.Combine(raiz.FullName, "PdvPadaria", "Views", "PaymentWindow.xaml"));
+
+            // Pao era o UNICO dos tres caminhos de entrada no carrinho sem nenhuma trava de
+            // estoque -- entrava sempre, calado, e so era recusado com o dinheiro na mao.
+            Checa("pao lancado por valor confere estoque na entrada",
+                  mw.Contains("private bool AddBreadProductToCart") &&
+                  System.Text.RegularExpressions.Regex.IsMatch(mw,
+                      @"private bool AddBreadProductToCart[\s\S]{0,1500}LocalStockQuantity < jaNoCarrinho \+ quantidadePaes"),
+                  "pao voltou a entrar no carrinho sem checar o estoque");
+
+            // A revalidacao antes de pagar conferia LINHA por linha -- duas linhas de 20 e 16
+            // paes, nenhuma sozinha estourava 30 em estoque, a soma sim.
+            Checa("a revalidacao de estoque soma por PRODUTO, nao por linha do carrinho",
+                  System.Text.RegularExpressions.Regex.IsMatch(mw,
+                      @"EstoqueDoCarrinhoConfereAsync[\s\S]{0,1500}GroupBy\(i => i\.ProductId\)"),
+                  "voltou a comparar linha a linha; da para vender mais do que existe somando linhas");
+
+            // "Repor" na aba Alertas so olhava o seletor de loja da aba Estoque: abrir Alertas
+            // na Loja B e clicar Repor ajustava a loja que a aba Estoque estivesse mostrando.
+            Checa("o botao Repor (aba Alertas) usa o seletor de loja da PROPRIA aba",
+                  mw.Contains("MainTabControl.SelectedIndex == 4") &&
+                  mw.Contains("AdjustStockRemoteAlerta") &&
+                  mw.Contains("StockAlertsList.ItemsSource as List<StockAlertView>"),
+                  "o ajuste da aba Alertas pode voltar a cair na loja errada");
+
+            // O catalogo de sugestoes da tela de venda so era descartado apos uma venda. A
+            // sincronizacao (a cada 60s, ou pelo botao) atualiza preco/estoque no SQLite mas
+            // o caixa continuava vendendo pelos dados de antes de sincronizar.
+            Checa("sincronizar com sucesso descarta o catalogo de sugestoes",
+                  System.Text.RegularExpressions.Regex.IsMatch(mw,
+                      @"if \(pullSuccess\) _catalogoBusca\.Clear\(\);"),
+                  "o caixa pode voltar a vender pelo preco/estoque de antes do ultimo sync");
+
+            // O campo de senha continuava ATIVO com o botao dizendo "Entrando...": Enter de
+            // novo iniciava um SEGUNDO login, revogando o token que o primeiro tinha acabado
+            // de criar.
+            Checa("Enter na senha nao dispara um segundo login em cima do primeiro",
+                  loginCs.Contains("e.Key == Key.Enter && LoginButton.IsEnabled"),
+                  "duplo Enter pode voltar a abrir duas sessoes/derrubar o token da maquina");
+
+            // O painel verde de troco mostrava "R$ 0,00" tanto quando o cliente pagou o valor
+            // exato (pode fechar) quanto quando pagou de menos (NAO pode) -- mesmo texto,
+            // mesma cor, para duas situacoes opostas.
+            Checa("o painel de troco distingue 'pode fechar' de 'falta receber'",
+                  payCs.Contains("Falta receber:") && payCs.Contains("MostrarPainelTroco"),
+                  "voltou a mostrar R$ 0,00 tanto pro caso valido quanto pro insuficiente");
+            Checa("o painel de troco tem nome para trocar de cor",
+                  payXaml.Contains("x:Name=\"TrocoPanel\"") && payXaml.Contains("x:Name=\"TrocoLabel\""),
+                  "o codigo-behind nao tem como pintar o painel de vermelho");
+
+            // Todo Button sem Style proprio caia no chrome padrao do Windows: hover pinta
+            // azul-claro por cima do Background, o texto claro (a maioria neste app) some.
+            Checa("existe um Style implicito de Button (App.xaml) com Template proprio",
+                  System.Text.RegularExpressions.Regex.IsMatch(appXaml,
+                      @"<Style TargetType=""Button"">[\s\S]{0,300}<Setter Property=""Template"">"),
+                  "botao sem Style= volta a sumir no hover azul do Windows");
+            Checa("FinishCashBtn (fechar a venda em dinheiro) tem Template proprio",
+                  System.Text.RegularExpressions.Regex.IsMatch(payXaml,
+                      @"FinishCashBtn[\s\S]{0,2000}<Button\.Style>[\s\S]{0,2000}<Setter Property=""Template"">"),
+                  "o Style local dele bloqueia o implicito e ele continua no chrome do Windows");
+        }
+
         try { Directory.Delete(pastaTeste, true); } catch { }
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;

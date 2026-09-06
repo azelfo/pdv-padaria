@@ -37,8 +37,10 @@
         <!-- ===== COR: estado ===== -->
         <SolidColorBrush x:Key="Success"     Color="#10B981"/>
         <SolidColorBrush x:Key="SuccessDark" Color="#059669"/>
+        <SolidColorBrush x:Key="SuccessTint" Color="#1A10B981"/> <!-- fundo sutil de painel "pode fechar" -->
         <SolidColorBrush x:Key="Danger"      Color="#EF4444"/>
         <SolidColorBrush x:Key="DangerDark"  Color="#DC2626"/>
+        <SolidColorBrush x:Key="DangerTint"  Color="#1AEF4444"/> <!-- fundo sutil de painel "não pode fechar" -->
         <SolidColorBrush x:Key="DangerSoft"  Color="#F87171"/> <!-- texto vermelho claro -->
         <SolidColorBrush x:Key="Info"        Color="#3B82F6"/>
         <SolidColorBrush x:Key="InfoLight"   Color="#60A5FA"/>
@@ -142,6 +144,53 @@
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.ExitActions>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- =========================================================
+             BOTÃO SEM ESTILO PRÓPRIO — implícito p/ todo Button.
+             ========================================================= -->
+        <!--
+             Botão sem Style= e sem Template próprio caía no chrome padrão do Windows: no
+             hover ele pinta um preenchimento azul-claro por cima do Background declarado,
+             mas respeita o Foreground — então texto claro/branco (a maioria dos botões
+             deste app, tema escuro) sumia bem na hora de clicar. Foi assim que o "+" do
+             carrinho sumia no hover (ver MainWindow.xaml, botões de quantidade).
+
+             Em vez de forçar uma cor de hover fixa — que brigaria com botões que já têm
+             cor própria ("Iniciar Venda" âmbar, "Cancelar" vermelho) — este template só
+             repassa o Background/Foreground/Borda que cada botão já declara (via
+             TemplateBinding) e dá o feedback por OPACIDADE. Um Style="{StaticResource X}"
+             local sempre vence um implícito, então ShortcutButton/SidebarButton/
+             FinishButton/GoldButton e qualquer botão com <Button.Template> próprio
+             continuam exatamente iguais.
+        -->
+        <Style TargetType="Button">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.7"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.4"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

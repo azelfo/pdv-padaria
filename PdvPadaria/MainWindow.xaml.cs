@@ -943,8 +943,7 @@ namespace PdvPadaria
                 existing.Quantity += quantity;
                 existing.Subtotal += itemSubtotal;
                 
-                int index = _cartItems.IndexOf(existing);
-                _cartItems[index] = existing;
+                RedesenharCarrinho();
             }
             else
             {
@@ -1326,8 +1325,8 @@ namespace PdvPadaria
 
                     // Usa direto o pão escolhido nos botões. Antes havia uma busca por id fixo
                     // ("prod-pao-carioca"/"prod-pao-massa-fina"), que ignorava qualquer pão novo.
-                    AddBreadProductToCart(paoSelecionado, val, totalDePaes, paoSelecionado.Name);
-                    inputWindow.Close();
+                    if (AddBreadProductToCart(paoSelecionado, val, totalDePaes, paoSelecionado.Name))
+                        inputWindow.Close();
                 }
                 else
                 {
@@ -1378,8 +1377,23 @@ namespace PdvPadaria
             inputWindow.ShowDialog();
         }
 
-        private void AddBreadProductToCart(Product product, double totalValorDigitado, int quantidadePaes, string variationCode)
+        // Devolve false quando recusa por falta de estoque, para quem chama saber que a
+        // janela de lançar pão deve continuar aberta (mesmo padrão do "Valor insuficiente").
+        private bool AddBreadProductToCart(Product product, double totalValorDigitado, int quantidadePaes, string variationCode)
         {
+            // Único dos três caminhos de entrada no carrinho (produto normal, peso, pão) que
+            // não conferia estoque nenhum: o pão entrava sempre, calado, e só era recusado na
+            // hora de pagar. A revalidação de EstoqueDoCarrinhoConfereAsync ainda protege o
+            // dinheiro, mas o aviso deve vir aqui, na hora de lançar — antes de ensacar o pão.
+            double jaNoCarrinho = _cartItems.Where(i => i.ProductId == product.Id).Sum(i => i.Quantity);
+            if (product.LocalStockQuantity < jaNoCarrinho + quantidadePaes)
+            {
+                MessageBox.Show(
+                    $"Estoque insuficiente para '{product.Name}'.\nDisponível: {(int)product.LocalStockQuantity} UN.",
+                    "Sem Estoque", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
             int valueCents = (int)Math.Round(totalValorDigitado * 100);
             int priceUnit = quantidadePaes > 0 ? (int)Math.Round((double)valueCents / quantidadePaes) : product.PriceSale;
 
@@ -1393,8 +1407,7 @@ namespace PdvPadaria
                 existing.Subtotal += valueCents;
                 existing.Details = $"{existing.Quantity} pães ({textDetail})";
                 
-                int index = _cartItems.IndexOf(existing);
-                _cartItems[index] = existing;
+                RedesenharCarrinho();
             }
             else
             {
@@ -1413,6 +1426,7 @@ namespace PdvPadaria
             }
 
             UpdateTotals();
+            return true;
         }
 
         private async void ChangeVariation_Click(object sender, RoutedEventArgs e)
@@ -1450,8 +1464,7 @@ namespace PdvPadaria
                         item.Details = "Fatia de Bolo";
                     }
 
-                    int index = _cartItems.IndexOf(item);
-                    _cartItems[index] = item;
+                    RedesenharCarrinho();
                     
                     UpdateTotals();
                 }
@@ -1474,8 +1487,7 @@ namespace PdvPadaria
                     item.Quantity -= 1;
                     item.Subtotal = (int)Math.Round(item.Quantity * item.PriceUnit);
                     
-                    int index = _cartItems.IndexOf(item);
-                    _cartItems[index] = item;
+                    RedesenharCarrinho();
                     UpdateTotals();
                 }
                 else
@@ -1519,8 +1531,7 @@ namespace PdvPadaria
                         item.Quantity += 1;
                         item.Subtotal = (int)Math.Round(item.Quantity * item.PriceUnit);
 
-                        int index = _cartItems.IndexOf(item);
-                        _cartItems[index] = item;
+                        RedesenharCarrinho();
                         UpdateTotals();
                     }
                 }
@@ -1530,6 +1541,19 @@ namespace PdvPadaria
                 }
             }
         }
+
+        // Redesenha as linhas do carrinho depois de mexer num item que JA esta na lista.
+        //
+        // Nao adianta reatribuir o objeto no mesmo indice (_cartItems[i] = item), que era o que
+        // estava nos cinco lugares que chamam isto aqui: para o WPF o DataContext da linha
+        // continua sendo o MESMO objeto, entao nenhum binding e relido e a linha segue mostrando
+        // o valor antigo. Como o total e escrito direto em TotalText.Text, a tela ficava se
+        // contradizendo -- linha "1 UN", total cobrando por 2 -- e o operador clicava de novo
+        // achando que o botao nao tinha pegado, cobrando o cliente a mais.
+        //
+        // CartItemView nao implementa INotifyPropertyChanged. Enquanto nao implementar, quem
+        // avisa a tela e isto. Medido: reatribuir mantem "1 UN", Items.Refresh() mostra "2 UN".
+        private void RedesenharCarrinho() => CartItemsList.Items.Refresh();
 
         private void UpdateTotals()
         {
@@ -1554,22 +1578,10 @@ namespace PdvPadaria
             {
                 var connection = App.Database.GetConnection();
 
-                // Valida estoque antes de gravar — protege contra race condition
-                foreach (var cartItem in _cartItems)
-                {
-                    var prod = await connection.FindAsync<Product>(cartItem.ProductId);
-                    if (prod == null) continue;
-                    if (prod.LocalStockQuantity < cartItem.Quantity)
-                    {
-                        string estoqueStr = prod.UnitMeasure == "KG"
-                            ? $"{prod.LocalStockQuantity:F3} KG"
-                            : $"{(int)prod.LocalStockQuantity} UN";
-                        MessageBox.Show(
-                            $"Estoque insuficiente para '{prod.Name}'.\nDisponível: {estoqueStr}.\nRemova ou reduza a quantidade no carrinho.",
-                            "Sem Estoque", MessageBoxButton.OK, MessageBoxImage.Warning);
-                        return;
-                    }
-                }
+                // Última conferência antes de gravar. Entre a tela de pagamento e aqui, o outro
+                // caixa da mesma loja pode ter vendido a última peça — por isso ela continua
+                // existindo mesmo agora que a mesma checagem já roda ANTES do pagamento.
+                if (!await EstoqueDoCarrinhoConfereAsync()) return;
 
                 var saleId = Guid.NewGuid().ToString();
 
@@ -1658,6 +1670,14 @@ namespace PdvPadaria
                 MessageBox.Show("Venda realizada com sucesso!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
 
                 _cartItems.Clear();
+
+                // A venda que acabou de sair baixou o estoque no banco, mas o catálogo que
+                // alimenta a lista de sugestões é uma cópia em memória carregada uma vez.
+                // Sem descartá-la, a próxima venda seria conferida contra o estoque de antes:
+                // o item entrava no carrinho sem reclamar e só era recusado no fim. Esvaziar
+                // basta — quem monta a sugestão recarrega quando encontra a lista vazia.
+                _catalogoBusca.Clear();
+
                 _discountCentavos = 0;
                 _selectedPaymentMethod = string.Empty;
                 _valorRecebidoCentavos = 0;
@@ -1927,23 +1947,76 @@ namespace PdvPadaria
             AbrirModalPagamento();
         }
 
-        private void AbrirModalPagamento()
+        // Confere se o carrinho ainda cabe no estoque que está no banco AGORA.
+        //
+        // Roda duas vezes de propósito: antes de abrir o pagamento e de novo antes de gravar.
+        // Antes rodava só antes de gravar — ou seja, DEPOIS de o operador escolher a forma de
+        // pagamento, receber o dinheiro e anunciar o troco. A recusa chegava com o dinheiro na
+        // mão e a venda não era gravada. A trava da entrada do carrinho não servia de aviso
+        // porque ela olha o catálogo em memória, que não acompanha as vendas do próprio turno.
+        private async Task<bool> EstoqueDoCarrinhoConfereAsync()
         {
-            var paymentWindow = new Views.PaymentWindow(_totalCentavos);
-            paymentWindow.Owner = this;
-            if (paymentWindow.ShowDialog() == true)
-            {
-                _selectedPaymentMethod = paymentWindow.SelectedPaymentMethod;
-                if (_selectedPaymentMethod == "DINHEIRO")
-                {
-                    _valorRecebidoCentavos = paymentWindow.ReceivedAmountCentavos;
-                }
-                else
-                {
-                    _valorRecebidoCentavos = 0;
-                }
+            var connection = App.Database.GetConnection();
 
-                FinishSaleFlow();
+            // Soma por PRODUTO, não por linha. Pão lançado por valor gera uma linha por
+            // digitação, e cada etiqueta de peso gera a sua própria — conferir linha a linha
+            // deixava passar mais do que existe (duas linhas de 20 e 16 pães, 30 em estoque,
+            // nenhuma das duas sozinha estoura, a soma sim). É a mesma soma que
+            // AddProductToCart já faz na entrada (linha 925); aqui só falta ela ter sido
+            // aplicada de novo na revalidação.
+            foreach (var grupo in _cartItems.GroupBy(i => i.ProductId))
+            {
+                var prod = await connection.FindAsync<Product>(grupo.Key);
+                if (prod == null) continue;
+
+                double pedido = grupo.Sum(i => i.Quantity);
+                if (prod.LocalStockQuantity < pedido)
+                {
+                    string estoqueStr = prod.UnitMeasure == "KG"
+                        ? $"{prod.LocalStockQuantity:F3} KG"
+                        : $"{(int)prod.LocalStockQuantity} UN";
+                    MessageBox.Show(
+                        $"Estoque insuficiente para '{prod.Name}'.\nDisponível: {estoqueStr}.\nRemova ou reduza a quantidade no carrinho.",
+                        "Sem Estoque", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Impede que F12 apertado duas vezes abra dois pagamentos: agora existe uma consulta
+        // ao banco antes da janela modal, e essa espera é uma brecha que antes não havia.
+        private bool _abrindoPagamento;
+
+        private async void AbrirModalPagamento()
+        {
+            if (_abrindoPagamento) return;
+            _abrindoPagamento = true;
+            try
+            {
+                // Recusa ANTES de o dinheiro entrar. Ver EstoqueDoCarrinhoConfereAsync.
+                if (!await EstoqueDoCarrinhoConfereAsync()) return;
+
+                var paymentWindow = new Views.PaymentWindow(_totalCentavos);
+                paymentWindow.Owner = this;
+                if (paymentWindow.ShowDialog() == true)
+                {
+                    _selectedPaymentMethod = paymentWindow.SelectedPaymentMethod;
+                    if (_selectedPaymentMethod == "DINHEIRO")
+                    {
+                        _valorRecebidoCentavos = paymentWindow.ReceivedAmountCentavos;
+                    }
+                    else
+                    {
+                        _valorRecebidoCentavos = 0;
+                    }
+
+                    FinishSaleFlow();
+                }
+            }
+            finally
+            {
+                _abrindoPagamento = false;
             }
         }
 
@@ -2491,10 +2564,19 @@ namespace PdvPadaria
         {
             if (sender is Button btn && btn.Tag is string productId)
             {
+                // Este mesmo botão atende a aba Estoque ("Ajustar") e a aba Alertas ("Repor"),
+                // e cada aba tem o SEU seletor de loja remota. Antes só o da aba Estoque era
+                // consultado: abrir Alertas numa loja e clicar "Repor" ajustava a loja que a
+                // aba Estoque estivesse mostrando (ou o cadastro local desta máquina), sem
+                // nenhum aviso de que a loja tinha mudado.
+                bool naAbaAlertas = MainTabControl.SelectedIndex == 4;
+                string lojaRemotaDaAbaAtual = naAbaAlertas ? _alertRemoteStoreId : _stockRemoteStoreId;
+
                 // Modo DONO editando loja remota: grava na nuvem, não no banco local.
-                if (!string.IsNullOrEmpty(_stockRemoteStoreId))
+                if (!string.IsNullOrEmpty(lojaRemotaDaAbaAtual))
                 {
-                    await AdjustStockRemote(productId);
+                    if (naAbaAlertas) await AdjustStockRemoteAlerta(productId);
+                    else await AdjustStockRemote(productId);
                     return;
                 }
                 try
@@ -2846,11 +2928,35 @@ namespace PdvPadaria
             if (item == null) return Task.CompletedTask;
 
             string lojaNome = (StockStoreSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "loja";
-            bool isKg = item.UnitMeasure == "KG";
+            return MostrarAjusteRemotoAsync(productId, _stockRemoteStoreId, item.Name, item.UnitMeasure,
+                item.LocalStockQuantity, lojaNome, () => LoadRemoteStock(_stockRemoteStoreId));
+        }
+
+        // Mesmo diálogo do "Repor" da aba Alertas — ver AdjustStockButton_Click. Usa o
+        // cache PRÓPRIO da aba Alertas (StockAlertsList), nunca o da aba Estoque: os dois
+        // podem estar mostrando lojas diferentes ao mesmo tempo.
+        private Task AdjustStockRemoteAlerta(string productId)
+        {
+            var lista = StockAlertsList.ItemsSource as List<StockAlertView>;
+            var item = lista?.FirstOrDefault(v => v.Id == productId);
+            if (item == null) return Task.CompletedTask;
+
+            string lojaNome = (AlertStoreSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "loja";
+            return MostrarAjusteRemotoAsync(productId, _alertRemoteStoreId, item.Name, item.UnitMeasure,
+                item.LocalStockQuantity, lojaNome, () => LoadRemoteAlerts(_alertRemoteStoreId));
+        }
+
+        // Diálogo "Somar/Definir e salvar na nuvem", compartilhado pelos dois botões acima.
+        // Cada chamador entrega os dados do SEU produto, a loja e como recarregar a SUA lista
+        // depois de salvar — nada aqui lê campo de módulo de aba nenhuma.
+        private Task MostrarAjusteRemotoAsync(string productId, string storeId, string productName,
+            string unitMeasure, double estoqueAtual, string lojaNome, Func<Task> recarregar)
+        {
+            bool isKg = unitMeasure == "KG";
 
             var win = new Window
             {
-                Title = $"Ajustar Estoque ({lojaNome}) - {item.Name}",
+                Title = $"Ajustar Estoque ({lojaNome}) - {productName}",
                 Width = 360,
                 Height = 230,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -2862,7 +2968,7 @@ namespace PdvPadaria
             var stack = new StackPanel { Margin = new Thickness(20) };
             stack.Children.Add(new TextBlock
             {
-                Text = $"Estoque atual na {lojaNome}: " + (isKg ? $"{item.LocalStockQuantity:F3} KG" : $"{item.LocalStockQuantity:F0} UN"),
+                Text = $"Estoque atual na {lojaNome}: " + (isKg ? $"{estoqueAtual:F3} KG" : $"{estoqueAtual:F0} UN"),
                 FontWeight = FontWeights.Bold,
                 Margin = new Thickness(0, 0, 0, 15),
                 TextWrapping = TextWrapping.Wrap
@@ -2888,18 +2994,18 @@ namespace PdvPadaria
                     MessageBox.Show("Digite uma quantidade válida.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
-                double newQty = combo.SelectedIndex == 0 ? item.LocalStockQuantity + inputVal : inputVal;
+                double newQty = combo.SelectedIndex == 0 ? estoqueAtual + inputVal : inputVal;
                 if (newQty < 0)
                 {
                     MessageBox.Show("O saldo do estoque não pode ser negativo.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
                 confirmBtn.IsEnabled = false;
-                var (ok, err) = await SetEstoqueLojaAsync(_stockRemoteStoreId, productId, newQty);
+                var (ok, err) = await SetEstoqueLojaAsync(storeId, productId, newQty);
                 if (ok)
                 {
                     win.Close();
-                    await LoadRemoteStock(_stockRemoteStoreId);
+                    await recarregar();
                 }
                 else
                 {
@@ -4413,6 +4519,15 @@ namespace PdvPadaria
                     .CountAsync();
 
                 Dispatcher.Invoke(() => {
+                    // O catálogo de sugestões da tela de VENDA é uma cópia em memória que só é
+                    // relida quando fica vazia (ObterCatalogoAsync). PullUpdatesAsync acabou de
+                    // gravar preço, estoque e produtos novos/inativados no SQLite — sem isto, o
+                    // caixa continuava vendendo pelos dados de antes da sincronização, mesmo
+                    // sincronizando com sucesso a cada 60 segundos. Descartar aqui é o único
+                    // lugar que cobre os quatro gatilhos (timer, botão manual, pós-venda,
+                    // pós-edição de produto): todos passam por SincronizarDadosNuvem.
+                    if (pullSuccess) _catalogoBusca.Clear();
+
                     if (pendingCount > 0)
                     {
                         SyncStatusText.Text = $"{pendingCount} venda(s) pendente(s)";
