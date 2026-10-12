@@ -15,6 +15,7 @@ namespace PdvPadaria.Services
     {
         public string LastError { get; private set; } = string.Empty;
         private readonly SQLiteConnection _dbConnection;
+        private readonly string _storeToken;
 
         // HttpClient ÚNICO e compartilhado entre todos os syncs. Um SyncService é criado a cada
         // ciclo de 60s; criar um HttpClient por ciclo esgota sockets (TIME_WAIT). Estático resolve.
@@ -34,6 +35,7 @@ namespace PdvPadaria.Services
             // Exigir a sessão no construtor é o que transforma "lembrar de passar a loja"
             // numa regra do compilador: não há como montar um sincronizador sem contexto.
             Sessao = sessao ?? throw new ArgumentNullException(nameof(sessao));
+            _storeToken = Sessao.ExecutarSeAtiva(StoreIdentityService.TokenAtual);
 
             _dbConnection = dbConnection;
             // Espera até 5s por locks (concorrência com a conexão de vendas) em vez de falhar na hora.
@@ -67,7 +69,7 @@ namespace PdvPadaria.Services
         /// HTTP, uma recusa passava por sucesso — as vendas eram marcadas como enviadas e
         /// apagadas da fila, e o estoque nunca chegava ao painel.
         /// </summary>
-        private static string? ErroDaResposta(string corpo, params string[] camposEsperados)
+        private string? ErroDaResposta(string corpo, params string[] camposEsperados)
         {
             if (string.IsNullOrWhiteSpace(corpo))
                 return "A nuvem nao confirmou o envio. As operacoes continuam na fila local.";
@@ -88,7 +90,7 @@ namespace PdvPadaria.Services
             string codigo = obj["error"]?.ToString() ?? string.Empty;
             if (codigo == "invalid_token")
             {
-                StoreIdentityService.MarcarTokenInvalido();
+                Sessao.ExecutarSeAtiva(StoreIdentityService.MarcarTokenInvalido);
                 return "A credencial de sincronizacao desta maquina nao vale mais. " +
                        "Enquanto isso, NENHUMA venda e NENHUM estoque deste caixa sobe para a nuvem. " +
                        "Para resolver: com a internet funcionando, saia e entre de novo. " +
@@ -133,6 +135,7 @@ namespace PdvPadaria.Services
 
             try
             {
+                Sessao.GarantirAtiva();
                 // 1. Busca vendas locais que não foram sincronizadas
                 var pendingSales = _dbConnection.Table<Sale>()
                     .Where(s => !s.IsSynced && s.StoreId == storeId)
@@ -182,7 +185,7 @@ namespace PdvPadaria.Services
                 // 4. ACK exato: marca apenas os IDs que realmente viajaram. Uma venda pode
                 // ser cancelada enquanto o HTTP esta em voo; nesse caso ela continua pendente
                 // para enviar o novo PaymentStatus, e o movimento de estorno nao e engolido.
-                _dbConnection.RunInTransaction(() =>
+                Sessao.ExecutarSeAtiva(() => _dbConnection.RunInTransaction(() =>
                 {
                     DateTime ackEm = DateTime.Now;
                     foreach (var sale in salesToSend)
@@ -199,7 +202,7 @@ namespace PdvPadaria.Services
                             "UPDATE StockMovement SET IsSynced = 1, SyncedAt = ? WHERE Id = ?",
                             ackEm, movimento.Id);
                     }
-                });
+                }));
 
                 return true;
             }
@@ -221,7 +224,7 @@ namespace PdvPadaria.Services
             try
             {
                 // Token da loja: o servidor carimba storeId/tenantId a partir dele (ignora o payload).
-                string storeToken = StoreIdentityService.TokenAtual();
+                string storeToken = _storeToken;
                 if (string.IsNullOrEmpty(storeToken))
                 {
                     LastError = "Esta maquina ainda nao tem credencial de sincronizacao. " +
@@ -254,7 +257,8 @@ namespace PdvPadaria.Services
                     request.Headers.Add("apikey", _supabaseAnonKey);
                     request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
 
-                    var response = await _httpClient.SendAsync(request);
+                    using var response = await Sessao.ExecutarSeAtiva(
+                        () => _httpClient.SendAsync(request, Sessao.Cancelamento));
                     string corpo = await response.Content.ReadAsStringAsync();
 
                     if (!response.IsSuccessStatusCode)
@@ -309,7 +313,7 @@ namespace PdvPadaria.Services
                 return false;
             }
 
-            string storeToken = StoreIdentityService.TokenAtual();
+            string storeToken = _storeToken;
             if (string.IsNullOrWhiteSpace(storeToken))
             {
                 LastError = "Esta maquina ainda nao tem credencial de sincronizacao. " +
@@ -319,6 +323,7 @@ namespace PdvPadaria.Services
 
             try
             {
+                Sessao.GarantirAtiva();
                 var products = _dbConnection.Table<Product>()
                     .Where(p => p.TenantId == tenantId)
                     .ToList();
@@ -345,7 +350,8 @@ namespace PdvPadaria.Services
                     request.Headers.Add("apikey", _supabaseAnonKey);
                     request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
 
-                    var response = await _httpClient.SendAsync(request);
+                    using var response = await Sessao.ExecutarSeAtiva(
+                        () => _httpClient.SendAsync(request, Sessao.Cancelamento));
                     string corpo = await response.Content.ReadAsStringAsync();
                     if (!response.IsSuccessStatusCode)
                     {
@@ -394,6 +400,7 @@ namespace PdvPadaria.Services
         {
             try
             {
+                Sessao.GarantirAtiva();
                 // Pendencias da propria loja podem ser preservadas: o pull de semeadura
                 // baixa o snapshot correto e reaplica somente os deltas desses movimentos.
                 // O que nao pode e levar operacoes de OUTRA loja junto com a troca.
@@ -466,7 +473,7 @@ namespace PdvPadaria.Services
                     .GroupBy(sp => sp.ProductId)
                     .ToDictionary(g => g.Key, g => g.First());
 
-                _dbConnection.RunInTransaction(() =>
+                Sessao.ExecutarSeAtiva(() => _dbConnection.RunInTransaction(() =>
                 {
                     var deltasPendentes = semearEstoqueDaNuvem
                         ? _dbConnection.Query<StockMovement>(
@@ -523,7 +530,7 @@ namespace PdvPadaria.Services
                             storeId, breadConfigs[0].Id);
                         _dbConnection.InsertOrReplace(breadConfigs[0]);
                     }
-                });
+                }));
 
                 if (!ApplyOwnerAdjustments(
                         tenantId, storeId, cadastros!.OwnerAdjustments,
@@ -554,7 +561,7 @@ namespace PdvPadaria.Services
                 }
                 if (ajustes.Count == 0) return true;
 
-                _dbConnection.RunInTransaction(() =>
+                Sessao.ExecutarSeAtiva(() => _dbConnection.RunInTransaction(() =>
                 {
                     foreach (var aj in ajustes)
                     {
@@ -571,18 +578,31 @@ namespace PdvPadaria.Services
                         // anterior ja esta incorporado e e apenas marcado como visto.
                         if (!incorporadoNoSnapshot && prod != null)
                         {
-                            double vendidoDepois = _dbConnection.ExecuteScalar<double>(
+                            DateTime ajusteEm = aj.CreatedAt.Kind == DateTimeKind.Utc
+                                ? aj.CreatedAt.ToLocalTime() : aj.CreatedAt;
+                            double deltaDepois = _dbConnection.Query<StockMovement>(
+                                    "SELECT * FROM StockMovement WHERE ProductId = ? AND StoreId = ? " +
+                                    "AND CreatedAt > ? AND (Reason IS NULL OR Reason <> 'AJUSTE_DONO')",
+                                    aj.ProductId, storeId, ajusteEm)
+                                .Sum(DeltaDoMovimento);
+
+                            // Vendas legadas sem movimento ainda precisam reduzir o saldo uma unica vez.
+                            double vendidoSemMovimento = _dbConnection.ExecuteScalar<double>(
                                 @"SELECT COALESCE(SUM(si.Quantity), 0)
                                     FROM SaleItem si
                                     JOIN Sale s ON s.Id = si.SaleId
                                    WHERE si.ProductId = ?
                                      AND s.StoreId = ?
                                      AND s.PaymentStatus = 'APROVADO'
-                                     AND s.SaleDate > ?",
-                                aj.ProductId, storeId, aj.CreatedAt);
+                                     AND s.SaleDate > ?
+                                     AND NOT EXISTS (
+                                         SELECT 1 FROM StockMovement m
+                                          WHERE m.SaleId = s.Id AND m.ProductId = si.ProductId
+                                            AND m.StoreId = s.StoreId AND UPPER(m.Type) = 'SAIDA')",
+                                aj.ProductId, storeId, ajusteEm);
 
                             double saldoAnterior = prod.LocalStockQuantity;
-                            double saldoFinal = Math.Max(0, aj.Quantity - vendidoDepois);
+                            double saldoFinal = Math.Max(0, aj.Quantity + deltaDepois - vendidoSemMovimento);
                             if (aj.MinStock.HasValue)
                                 _dbConnection.Execute(
                                     "UPDATE Product SET LocalStockQuantity=?, MinStock=? WHERE Id=?",
@@ -604,7 +624,7 @@ namespace PdvPadaria.Services
                                     Type = saldoFinal >= saldoAnterior ? "ENTRADA" : "SAIDA",
                                     Quantity = Math.Abs(saldoFinal - saldoAnterior),
                                     Reason = "AJUSTE_DONO",
-                                    CreatedAt = aj.CreatedAt,
+                                    CreatedAt = ajusteEm,
                                     IsSynced = true,
                                     SyncedAt = DateTime.Now,
                                     BalanceBefore = saldoAnterior,
@@ -615,7 +635,7 @@ namespace PdvPadaria.Services
 
                         _dbConnection.Insert(new AppliedOwnerAdjustment { Id = aj.Id });
                     }
-                });
+                }));
                 return true;
             }
             catch (Exception ex)
@@ -651,7 +671,7 @@ namespace PdvPadaria.Services
             try
             {
                 var corpoReq = new StringContent(
-                    JsonConvert.SerializeObject(new { p_token = StoreIdentityService.TokenAtual() }),
+                    JsonConvert.SerializeObject(new { p_token = _storeToken }),
                     Encoding.UTF8, "application/json");
 
                 using (var request = new HttpRequestMessage(
@@ -661,7 +681,8 @@ namespace PdvPadaria.Services
                     request.Headers.Add("apikey", _supabaseAnonKey);
                     request.Headers.Add("Authorization", $"Bearer {_supabaseAnonKey}");
 
-                    var response = await _httpClient.SendAsync(request);
+                    using var response = await Sessao.ExecutarSeAtiva(
+                        () => _httpClient.SendAsync(request, Sessao.Cancelamento));
                     string corpo = await response.Content.ReadAsStringAsync();
 
                     if (!response.IsSuccessStatusCode)

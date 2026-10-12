@@ -483,14 +483,27 @@ let lojasList = [];
 // Estado de período por aba: dias = 0|7|30|'custom'; de/ate só usados no custom (datetime-local).
 let dashPeriodo  = { dias:0, de:null, ate:null };
 let vendaPeriodo = { dias:0, de:null, ate:null };
+let vendaRequisicao = 0;
+let paoRequisicao = 0;
+let detalheRequisicao = 0;
 
 const $ = id => document.getElementById(id);
 const brl = c => (c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
-const rpc = (fn, body) => fetch(SUPABASE_URL+"/rest/v1/rpc/"+fn, {
-  method:"POST",
-  headers:{ "apikey":ANON_KEY, "Authorization":"Bearer "+ANON_KEY, "Content-Type":"application/json" },
-  body: JSON.stringify(body)
-}).then(r => r.json());
+async function rpc(fn, body){
+  try{
+    const r = await fetch(SUPABASE_URL+"/rest/v1/rpc/"+fn, {
+      method:"POST",
+      headers:{ "apikey":ANON_KEY, "Authorization":"Bearer "+ANON_KEY, "Content-Type":"application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    if(!r.ok) return { error: data?.message || data?.error || `HTTP ${r.status}` };
+    if(!data || typeof data!=='object' || Array.isArray(data)) return { error: 'Resposta inválida do servidor.' };
+    return data;
+  }catch(e){
+    return { error: 'Não foi possível confirmar a operação. Recarregue os dados antes de tentar novamente.' };
+  }
+}
 
 function pad(n){return String(n).padStart(2,'0')}
 function fmtLocal(d){
@@ -560,9 +573,15 @@ function preencherSeletorLojas(){
 }
 
 let estqFiltro = 'TODOS';
+let estqRequisicao = 0;
 
 async function carregarEstoque(){
+  const requisicao = ++estqRequisicao;
   const storeId = $('estqLoja').value;
+  window._estqProds = null;
+  window._estqCategorias = [];
+  delete $('estqCard').dataset.storeId;
+  $('estqResumo').innerHTML = '';
   $('estqErr').classList.add('hidden');
   $('estqOk').classList.add('hidden');
   if(!storeId){ $('estqCard').innerHTML='<div class="muted" style="padding:8px 0">Selecione uma loja acima.</div>'; window._estqProds=null; return; }
@@ -570,6 +589,7 @@ async function carregarEstoque(){
   $('estqCard').innerHTML = '<span class="spinner"></span><span class="muted">Carregando...</span>';
 
   const data = await rpc('get_loja_estoque', { p_email:creds.email, p_password:creds.senha, p_store_id:storeId });
+  if(requisicao !== estqRequisicao) return;
 
   if(data.error){
     $('estqCard').innerHTML='';
@@ -650,13 +670,15 @@ function renderEstoque(){
 
 async function salvarItem(btn){
   const i = parseInt(btn.dataset.i);
-  const prod = window._estqProds[i];
+  const prods = window._estqProds;
+  const prod = prods?.[i];
   const storeId = $('estqCard').dataset.storeId;
+  if(!prod || !storeId || storeId !== $('estqLoja').value) return;
   const row = document.querySelector(`.prod-row[data-i="${i}"]`);
   const input = row.querySelector('input');
   const novaQtd = parseFloat(input.value);
 
-  if(isNaN(novaQtd) || novaQtd < 0){ input.focus(); return; }
+  if(!Number.isFinite(novaQtd) || novaQtd < 0){ input.focus(); return; }
 
   btn.disabled = true;
   btn.textContent = '...';
@@ -672,24 +694,27 @@ async function salvarItem(btn){
     p_motivo: 'AJUSTE_MANUAL'
   });
 
-  if(res.error){
-    $('estqErr').textContent = res.error==='invalid_credentials'?"Sessão expirada.":res.error;
+  btn.disabled = false;
+  btn.textContent = 'Salvar';
+  if(prods !== window._estqProds) return;
+  if(res.error || res.success !== true){
+    $('estqErr').textContent = res.error==='invalid_credentials'?"Sessão expirada.":res.error || 'O servidor não confirmou o ajuste.';
     $('estqErr').classList.remove('hidden');
   } else {
-    row.dataset.orig = novaQtd;
-    window._estqProds[i].quantidade = novaQtd;
+    prod.quantidade = novaQtd;
+    prod.jaLancado = true;
+    delete prod.situacao;
+    renderEstoque();
     $('estqOk').textContent = `✓ ${prod.nome} atualizado para ${novaQtd}`;
     $('estqOk').classList.remove('hidden');
     setTimeout(()=>$('estqOk').classList.add('hidden'), 3000);
   }
-
-  btn.disabled = false;
-  btn.textContent = 'Salvar';
 }
 
 async function excluirItem(btn){
   const i = parseInt(btn.dataset.i);
-  const prod = window._estqProds[i];
+  const prods = window._estqProds;
+  const prod = prods?.[i];
   if(!prod) return;
 
   if(!confirm(`Excluir "${prod.nome}"?\n\nO produto será removido de todas as lojas e some do PDV no próximo sync. O histórico de vendas é preservado.`)) return;
@@ -705,18 +730,20 @@ async function excluirItem(btn){
     p_product_id: prod.productId
   });
 
-  if(res.error){
+  btn.disabled = false;
+  btn.textContent = '🗑';
+  if(prods !== window._estqProds) return;
+  if(res.error || res.success !== true){
     $('estqErr').textContent =
       res.error==='invalid_credentials' ? "Sessão expirada, faça login novamente." :
-      res.error==='not_found' ? "Produto não encontrado." : res.error;
+      res.error==='not_found' ? "Produto não encontrado." : res.error || 'O servidor não confirmou a exclusão.';
     $('estqErr').classList.remove('hidden');
-    btn.disabled = false;
-    btn.textContent = '🗑';
     return;
   }
 
   // Remove da lista em memória e re-renderiza
-  window._estqProds.splice(i, 1);
+  const pos = prods.indexOf(prod);
+  if(pos >= 0) prods.splice(pos, 1);
   renderEstoque();
   $('estqOk').textContent = `✓ ${prod.nome} excluído`;
   $('estqOk').classList.remove('hidden');
@@ -757,7 +784,7 @@ async function gerarCodigoInterno(){
 
   btn.disabled = false; btn.textContent = txtAnterior;
 
-  if(res.error){
+  if(res.error || res.success !== true || !res.codigo){
     $('prodErr').textContent = res.error==='invalid_credentials'
       ? "Sessão expirada, faça login novamente."
       : "Não foi possível gerar o código agora.";
@@ -792,13 +819,13 @@ async function salvarNovoProduto(){
 
   btn.disabled = false; btn.textContent = 'Cadastrar produto';
 
-  if(res.error){
+  if(res.error || res.success !== true){
     $('prodErr').textContent =
       res.error==='invalid_credentials' ? "Sessão expirada, faça login novamente." :
       res.error==='nome_obrigatorio' ? "Informe o nome do produto." :
       res.error==='categoria_invalida' ? "Categoria inválida." :
       res.error==='barcode_obrigatorio' ? "Informe o código de barras do produto." :
-      res.error==='barcode_duplicado' ? "Já existe um produto ATIVO com este código de barras." : res.error;
+      res.error==='barcode_duplicado' ? "Já existe um produto ATIVO com este código de barras." : res.error || 'O servidor não confirmou o cadastro.';
     $('prodErr').classList.remove('hidden');
     return;
   }
@@ -835,6 +862,17 @@ $('entrarBtn').onclick = async ()=>{
 };
 
 $('sairBtn').onclick = ()=>{
+  ++estqRequisicao;
+  ++vendaRequisicao;
+  ++paoRequisicao;
+  fecharVendaModal();
+  window._vendas = [];
+  for(const id of ['vendaLista','vendaResumo','vendaModalBody','paoLista','paoResumo']) $(id).innerHTML = '';
+  window._estqProds = null;
+  window._estqCategorias = [];
+  $('estqLoja').value = '';
+  $('estqCard').innerHTML = '';
+  $('estqResumo').innerHTML = '';
   creds = { email:"", senha:"" };
   $('senha').value = "";
   lojasList = [];
@@ -877,6 +915,8 @@ function preencherSeletorVendaLojas(){
 
 // ---- Vendas: carregar lista ----
 async function carregarVendas(){
+  const requisicao = ++vendaRequisicao;
+  window._vendas = [];
   const p=calcPeriodo(vendaPeriodo);
   $('vendaErr').classList.add('hidden');
   if(!p){ $('vendaErr').textContent="Selecione as datas De e Até."; $('vendaErr').classList.remove('hidden'); return; }
@@ -889,6 +929,7 @@ async function carregarVendas(){
     p_email:creds.email, p_password:creds.senha,
     p_from:p.de, p_to:p.ate, p_store_id:storeId, p_payment:'TODOS'
   });
+  if(requisicao !== vendaRequisicao) return;
 
   if(data.error){
     $('vendaLista').innerHTML='';
@@ -902,10 +943,13 @@ async function carregarVendas(){
 
   // Resumo: total aprovado + qtd
   const aprovadas=vendas.filter(v=>(v.status||'').toUpperCase()==='APROVADO');
-  const totFat=aprovadas.reduce((s,v)=>s+(v.total_centavos||0),0);
+  const resumo=data.resumo;
+  const parcial=!resumo && vendas.length>=500;
+  const totFat=resumo ? resumo.faturamento_centavos : aprovadas.reduce((s,v)=>s+(v.total_centavos||0),0);
+  const qtd=resumo ? resumo.vendas_qtd : aprovadas.length;
   $('vendaResumo').innerHTML=`
-    <div><div class="vr-fat">${brl(totFat)}</div><div class="vr-l">Faturamento aprovado</div></div>
-    <div style="text-align:right"><div class="vr-fat">${aprovadas.length}</div><div class="vr-l">Vendas</div></div>`;
+    <div><div class="vr-fat">${brl(totFat)}</div><div class="vr-l">Faturamento aprovado${parcial?' nesta lista':''}</div></div>
+    <div style="text-align:right"><div class="vr-fat">${qtd}</div><div class="vr-l">Vendas${parcial?' nesta lista':''}</div></div>`;
 
   if(!vendas.length){
     $('vendaLista').innerHTML='<div class="muted" style="padding:8px 0">Nenhuma venda no período.</div>';
@@ -913,7 +957,9 @@ async function carregarVendas(){
   }
 
   const mostrarLoja=!storeId;
-  $('vendaLista').innerHTML=vendas.map((v,i)=>`
+  const aviso=parcial || resumo?.total_registros>vendas.length
+    ? `<div class="muted" style="padding:8px 0">Exibindo as ${vendas.length} vendas mais recentes.${parcial?' Os valores acima são parciais; reduza o período para conferir todas as vendas.':''}</div>` : '';
+  $('vendaLista').innerHTML=aviso+vendas.map((v,i)=>`
     <div class="venda-row" onclick="abrirVendaDetalhe('${v.id}')">
       <div>
         <div class="venda-hora">${fmtHoraData(v.data)}<span class="badge-status ${statusClass(v.status)}">${statusLabel(v.status)}</span></div>
@@ -928,10 +974,12 @@ async function carregarVendas(){
 
 // ---- Vendas: detalhe (modal) ----
 async function abrirVendaDetalhe(saleId){
+  const requisicao = ++detalheRequisicao;
   $('vendaModal').classList.remove('hidden');
   $('vendaModalBody').innerHTML='<span class="spinner"></span><span class="muted">Carregando...</span>';
 
   const d=await rpc('get_venda_detalhe',{ p_email:creds.email, p_password:creds.senha, p_sale_id:saleId });
+  if(requisicao !== detalheRequisicao) return;
 
   if(d.error){
     $('vendaModalBody').innerHTML=`<div class="err">${d.error==='not_found'?'Venda não encontrada.':d.error==='invalid_credentials'?'Sessão expirada.':d.error}</div>`;
@@ -968,7 +1016,7 @@ async function abrirVendaDetalhe(saleId){
     <div class="md-row"><span class="k">Troco</span><span>${brl(d.troco_centavos||0)}</span></div>`:''}
   `;
 }
-function fecharVendaModal(){ $('vendaModal').classList.add('hidden'); }
+function fecharVendaModal(){ ++detalheRequisicao; $('vendaModal').classList.add('hidden'); }
 
 // ---- Período: wiring genérico por aba ----
 function wirePeriods(periodsId, customId, state, onApply){
@@ -1011,6 +1059,7 @@ function paoDiaSelecionado(){
 }
 
 async function carregarPao(){
+  const requisicao = ++paoRequisicao;
   $('paoErr').classList.add('hidden');
   $('paoResumo').innerHTML='';
   $('paoLista').innerHTML='<div class="muted" style="padding:8px 0">Carregando...</div>';
@@ -1022,7 +1071,9 @@ async function carregarPao(){
       p_email:creds.email, p_password:creds.senha,
       p_dia:paoDiaSelecionado(), p_store_id:storeId
     });
+    if(requisicao !== paoRequisicao) return;
   }catch(e){
+    if(requisicao !== paoRequisicao) return;
     $('paoErr').textContent='Falha ao carregar: '+e.message;
     $('paoErr').classList.remove('hidden');
     $('paoResumo').innerHTML='';

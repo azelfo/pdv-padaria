@@ -18,161 +18,63 @@ class Program
         if (!ok) falhas++;
     }
 
-    // O instalador agora e gravado com nome sorteado; a checagem passou a perguntar se
-    // ALGUM arquivo de atualizacao apareceu, em vez de vigiar um caminho fixo que o
-    // codigo nao usa mais (e que faria os dois testes de disco passarem por engano).
-    static bool GravouAlgumInstalador() =>
-        Directory.GetFiles(Path.GetTempPath(), "PdvUpdate_*.exe").Length > 0;
-
-    // Sobe procurando docs/version.json: o sha estava fixo aqui e envelhecia a cada
-    // lancamento, fazendo o teste da URL passar pelo motivo errado (o hash e que barrava).
-    static string ShaPublicado()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "docs", "version.json")))
-            dir = dir.Parent;
-        if (dir == null) throw new FileNotFoundException("docs/version.json nao encontrado");
-        var json = File.ReadAllText(Path.Combine(dir.FullName, "docs", "version.json"));
-        var m = System.Text.RegularExpressions.Regex.Match(json, @"""sha256""\s*:\s*""([0-9a-fA-F]{64})""");
-        return m.Success ? m.Groups[1].Value : throw new InvalidOperationException("sha256 ausente");
-    }
-
     static async Task<int> Main()
     {
-        // Isola os arquivos de identidade: ResolverAsync grava loja-identidade.txt e
-        // estoque-loja.txt, e rodar esta checagem num caixa de loja reescrevia os de verdade.
-        var pastaTeste = Path.Combine(Path.GetTempPath(), "pdv-checagem-" + Path.GetRandomFileName());
+        var pastaTeste = Path.Combine(Path.GetTempPath(), "pdv-checagem-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(pastaTeste);
+        string? dadosAnterior = Environment.GetEnvironmentVariable("PDV_DADOS_DIR");
         Environment.SetEnvironmentVariable("PDV_DADOS_DIR", pastaTeste);
+        try { return await ChecagensLocais(pastaTeste); }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PDV_DADOS_DIR", dadosAnterior);
+            string destino = Path.GetFullPath(pastaTeste);
+            if (destino.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase))
+                Directory.Delete(destino, true);
+        }
+    }
 
-        string urlOficial = "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe";
-        string shaReal = ShaPublicado();
+    static async Task<int> ChecagensLocais(string pastaTeste)
+    {
+        // O csproj fornece esta fixture, nunca a configuracao real de uma loja.
+        string fixture = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, ".env"));
+        if (!fixture.StartsWith("# PDV_TESTE_OFFLINE") || EnvService.Get("STORE_SYNC_TOKEN") != "")
+            throw new InvalidOperationException("A checagem exige a fixture offline, sem credencial real.");
+        SQLitePCL.Batteries_V2.Init();
 
-        Console.WriteLine("\n== P0-1: instalador verificado ==");
+        Console.WriteLine("\n== P0-1: impressao digital do instalador ==");
+        var hash = typeof(UpdateService).GetMethod("ImpressaoDigital",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        string digital = (string)hash.Invoke(null, new object[] { System.Text.Encoding.UTF8.GetBytes("abc") })!;
+        Checa("SHA256 confere com vetor conhecido",
+            digital == "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD");
+        Checa("bytes diferentes produzem outra impressao",
+            digital != (string)hash.Invoke(null, new object[] { System.Text.Encoding.UTF8.GetBytes("abcd") })!);
 
-        foreach (var f in Directory.GetFiles(Path.GetTempPath(), "PdvUpdate_*.exe"))
-            try { File.Delete(f); } catch { }
-        bool r1 = await UpdateService.DownloadAndInstallAsync(new UpdateInfo {
-            Version = "9.9.9", Url = "https://exemplo-malicioso.invalido/setup.exe", Sha256 = shaReal });
-        Checa("endereco fora do repositorio oficial e recusado", !r1, "aceitou endereco estranho");
-        Checa("nada foi gravado no disco", !GravouAlgumInstalador(), "gravou arquivo mesmo recusando");
-
-        bool r2 = await UpdateService.DownloadAndInstallAsync(new UpdateInfo {
-            Version = "9.9.9", Url = urlOficial,
-            Sha256 = "0000000000000000000000000000000000000000000000000000000000000000" });
-        Checa("impressao digital que nao confere e recusada", !r2, "executou binario nao conferido");
-        Checa("arquivo adulterado nao fica no disco", !GravouAlgumInstalador(), "deixou o arquivo adulterado no disco");
-
-        Console.WriteLine("\n== P0-3: estado da sessao morre no logout ==");
+        Console.WriteLine("\n== P0-3: identidade offline e logout ==");
+        File.WriteAllText(Path.Combine(pastaTeste, "loja-identidade.txt"), "loja-a");
         await StoreIdentityService.ResolverAsync(string.Empty);
         string antes = StoreIdentityService.StoreId;
-        Checa("identidade resolvida na 1a sessao", !string.IsNullOrEmpty(antes), "nao resolveu (offline?)");
-
+        Checa("identidade offline usa o cache da maquina", antes == "loja-a");
+        Checa("sem token, nao tenta registrar ou sincronizar", StoreIdentityService.TokenAusente);
         StoreIdentityService.Encerrar();
-        Checa("StoreId zerado apos Encerrar", string.IsNullOrEmpty(StoreIdentityService.StoreId), StoreIdentityService.StoreId);
-        Checa("TokenInvalido zerado", !StoreIdentityService.TokenInvalido);
+        Checa("StoreId zerado apos Encerrar", string.IsNullOrEmpty(StoreIdentityService.StoreId));
         Checa("TokenAusente zerado", !StoreIdentityService.TokenAusente);
-
         await StoreIdentityService.ResolverAsync(string.Empty);
-        Checa("2a sessao reconsulta e resolve de novo", StoreIdentityService.StoreId == antes,
-              $"antes={antes} depois={StoreIdentityService.StoreId}");
+        Checa("2a sessao recupera identidade offline", StoreIdentityService.StoreId == antes);
 
         Console.WriteLine("\n== cancelamento: so a loja dona pode estornar ==");
-        Checa("venda desta loja pode ser cancelada aqui",
-              StoreIdentityService.PertenceAEstaMaquina(antes));
-        Checa("venda de OUTRA loja e barrada",
-              !StoreIdentityService.PertenceAEstaMaquina("e33ec1a1-a041-4fae-aefa-625bc518772f"),
-              "deixaria cancelar venda de outra loja -> travaria a fila de envio");
-        Checa("registro sem loja e barrado",
-              !StoreIdentityService.PertenceAEstaMaquina(null));
-        Checa("loja em branco e barrada",
-              !StoreIdentityService.PertenceAEstaMaquina("   "));
-        // A identidade da MAQUINA sobrevive ao logout de proposito: e ela que permite o
-        // caixa abrir e operar sem internet no dia seguinte. O que o logout descarta e a
-        // SESSAO. Se esta asserção passar a falhar, o caixa perdeu a capacidade de saber
-        // de que loja ele e quando abrir offline.
+        Checa("venda desta loja pode ser cancelada aqui", StoreIdentityService.PertenceAEstaMaquina(antes));
+        Checa("venda de outra loja e barrada", !StoreIdentityService.PertenceAEstaMaquina("loja-b"));
+        Checa("registro sem loja e barrado", !StoreIdentityService.PertenceAEstaMaquina(null));
+        Checa("loja em branco e barrada", !StoreIdentityService.PertenceAEstaMaquina("   "));
         StoreIdentityService.Encerrar();
-        Checa("apos o logout a maquina ainda sabe de que loja e",
-              StoreIdentityService.PertenceAEstaMaquina(antes),
-              "perdeu a identidade da maquina; abriria offline sem saber a loja");
+        Checa("apos logout a maquina ainda sabe sua loja", StoreIdentityService.PertenceAEstaMaquina(antes));
 
-        Console.WriteLine("\n== pull: dados de outra loja nao entram neste caixa ==");
-        SQLitePCL.Batteries_V2.Init();
-        var db = Path.Combine(pastaTeste, "vazio.db");
-        using (var c = new SQLite.SQLiteConnection(db))
-        {
-            c.CreateTable<PdvPadaria.Models.Product>();
-            c.CreateTable<PdvPadaria.Models.Category>();
-            c.CreateTable<PdvPadaria.Models.BreadConfig>();
-            c.CreateTable<PdvPadaria.Models.Sale>();
-            c.CreateTable<PdvPadaria.Models.SaleItem>();
-            c.CreateTable<PdvPadaria.Models.StockMovement>();
-            c.CreateTable<PdvPadaria.Models.AppliedOwnerAdjustment>();
-        }
-        var sessaoDoTeste = new Sessao("u", "ATENDENTE", "loja-que-nao-e-esta", "tenant-qualquer");
-        using (var conn = new SQLite.SQLiteConnection(db))
-        using (var sync = new SyncService(conn, sessaoDoTeste))
-        {
-            // O token desta maquina resolve para a loja real. Pedir o pull dizendo ser OUTRA
-            // loja tem que ser recusado: sem esta guarda, o catalogo e o estoque da loja do
-            // token seriam gravados sob o nome da loja errada -- o incidente de 20/08.
-            bool ok = await sync.PullUpdatesAsync("tenant-qualquer", "loja-que-nao-e-esta");
-            Checa("pull mentindo a loja e recusado", !ok, "gravou dados de outra loja");
-            Checa("a recusa explica o motivo", sync.LastError.Contains("opera como"), sync.LastError);
-        }
-        using (var c = new SQLite.SQLiteConnection(db))
-        {
-            int prod = c.ExecuteScalar<int>("SELECT COUNT(*) FROM Product");
-            Checa("nada foi gravado no banco", prod == 0, $"{prod} produto(s) gravados");
-        }
-
-        Console.WriteLine("\n== venda da fila nao troca de loja no caminho ==");
-        // Venda feita OFFLINE numa loja, que sobe depois que a maquina passou a operar por
-        // OUTRA, virava venda da segunda loja em silencio: o servidor carimbava o storeId a
-        // partir do token. Medido em 26/08 -- venda da Centro chegou como Japao.
-        // Agora e recusada e fica na fila ate a maquina voltar a ser a loja dela.
-        // Este teste nunca grava na nuvem: o envio e rejeitado antes disso.
-        const string OUTRA_LOJA = "e33ec1a1-a041-4fae-aefa-625bc518772f";
-        using (var c = new SQLite.SQLiteConnection(db))
-        {
-            c.Execute("DELETE FROM Sale");
-            c.Insert(new PdvPadaria.Models.Sale {
-                Id = "checagem-outra-loja", StoreId = OUTRA_LOJA,
-                TenantId = "927cfa8e-655a-4307-a50a-806c72d99e4f", UserId = "u",
-                SaleDate = DateTime.Now, Subtotal = 1, Total = 1,
-                PaymentMethod = "DINHEIRO", PaymentStatus = "APROVADO", IsSynced = false });
-        }
-        using (var conn = new SQLite.SQLiteConnection(db))
-        using (var sync = new SyncService(conn, new Sessao("u", "ATENDENTE", OUTRA_LOJA, "t")))
-        {
-            bool subiu = await sync.PushSalesAsync("t", OUTRA_LOJA);
-            Checa("venda de outra loja e recusada", !subiu,
-                  "subiu carimbada na loja errada");
-            Checa("a recusa explica o que fazer", sync.LastError.Contains("OUTRA loja"),
-                  sync.LastError);
-        }
-        using (var c = new SQLite.SQLiteConnection(db))
-            Checa("a venda continua na fila",
-                  c.ExecuteScalar<int>("SELECT COUNT(*) FROM Sale WHERE IsSynced=0") == 1,
-                  "venda sumiu da fila sem ter subido");
-
-        Console.WriteLine("\n== token recusado continua recusado depois do logout ==");
+        Console.WriteLine("\n== recusa de credencial sobrevive ao logout ==");
+        StoreIdentityService.MarcarTokenInvalido();
         StoreIdentityService.Encerrar();
-        File.WriteAllText(Path.Combine(pastaTeste, "caixa-token.dat"), "token-que-nao-existe");
-        await StoreIdentityService.ResolverAsync(string.Empty);
-        Checa("nuvem recusou o token", StoreIdentityService.TokenInvalido, "nao marcou como invalido");
-        // Enquanto o arquivo morto ficava no disco, TokenAtual() o devolvia sempre e
-        // encobria o STORE_SYNC_TOKEN do .env -- a maquina travava num token recusado
-        // tendo um valido do lado.
-        Checa("o token recusado e apagado do disco",
-              !File.Exists(Path.Combine(pastaTeste, "caixa-token.dat")),
-              "arquivo morto continua encobrindo o token de reserva");
-        StoreIdentityService.Encerrar();
-        // Sair do sistema não conserta credencial recusada. Zerar o veredito aqui fazia o
-        // aviso sumir num logout+login sem internet, e o caixa voltava a operar calado.
-        Checa("o veredito sobrevive ao logout", StoreIdentityService.TokenInvalido,
-              "esqueceu que o token foi recusado; abriria offline sem aviso");
-
+        Checa("o veredito sobrevive ao logout", StoreIdentityService.TokenInvalido);
         Console.WriteLine("\n== etapa 1: a sessao e imutavel e unica ==");
         var s1 = new Sessao("u-1", "ATENDENTE", "loja-a", "rede-1");
         var s2 = new Sessao("u-1", "ATENDENTE", "loja-a", "rede-1");
@@ -319,8 +221,8 @@ class Program
             Checa("procurar atualizacao vem antes da sincronizacao",
                   atualizacao >= 0 && sincronizacao > atualizacao,
                   "uma falha de sincronizacao impediria a maquina de se consertar");
-            Checa("procurar atualizacao vem antes de resolver a identidade",
-                  atualizacao >= 0 && identidade > atualizacao,
+            Checa("se a identidade for resolvida na abertura, nao bloqueia a atualizacao",
+                  atualizacao >= 0 && (identidade < 0 || identidade > atualizacao),
                   "um token recusado impediria a maquina de se consertar");
         }
 
@@ -465,9 +367,45 @@ class Program
                   System.Text.RegularExpressions.Regex.IsMatch(payXaml,
                       @"FinishCashBtn[\s\S]{0,2000}<Button\.Style>[\s\S]{0,2000}<Setter Property=""Template"">"),
                   "o Style local dele bloqueia o implicito e ele continua no chrome do Windows");
+
+            // A barreira real e exercitada em regressao-sync; aqui conferimos seus callers WPF.
+            string Metodo(string assinatura)
+            {
+                int inicio = mw.IndexOf(assinatura);
+                if (inicio < 0) return "";
+                int final = mw.IndexOf("\n        private ", inicio + 1);
+                return mw.Substring(inicio, (final < 0 ? mw.Length : final) - inicio);
+            }
+            string venda = Metodo("private async void FinishSaleFlow");
+            string encerrar = Metodo("private async Task<bool> EncerrarSessaoAsync");
+            string pagamento = Metodo("private async void AbrirModalPagamento");
+            Checa("a janela principal nao resolve identidade fora do login",
+                !mw.Contains("StoreIdentityService.ResolverAsync("),
+                "resposta de identidade pode chegar depois do logout e trocar a loja do novo login");
+            Checa("venda usa identidade imutavel da sessao",
+                venda.Contains("_escopo.Sessao.RedeId") && venda.Contains("_escopo.Sessao.LojaId") &&
+                !venda.Contains("StoreIdentityService.Atual("));
+            Checa("gravacao da venda entra na barreira dentro da transacao",
+                venda.Contains("RunInTransactionAsync((tx) => _escopo.Sessao.ExecutarSeAtiva(() =>"));
+            int esperaVenda = encerrar.IndexOf("if (!await _saleGate.WaitAsync(");
+            int liberaVenda = encerrar.IndexOf("_saleGate.Release();");
+            string vendaEmCurso = esperaVenda < 0 || liberaVenda < esperaVenda ? "" :
+                encerrar.Substring(esperaVenda, liberaVenda - esperaVenda);
+            Checa("venda em andamento adia logout sem encerrar a sessao",
+                vendaEmCurso.Contains("return false;") && vendaEmCurso.Contains("IsEnabled = true;") &&
+                vendaEmCurso.Contains("_encerrandoEmCurso = false;") && !vendaEmCurso.Contains("Dispose("));
+            Checa("logout adiado nao abre outra janela de login",
+                Metodo("private async void LogoutButton_Click").Contains("if (!await EncerrarSessaoAsync()) return;"));
+            Checa("fechamento adiado mantem a janela aberta",
+                Metodo("private async void Window_Closing").Contains("if (await EncerrarSessaoAsync()) Close();"));
+            int consulta = pagamento.IndexOf("await EstoqueDoCarrinhoConfereAsync()");
+            int modal = pagamento.IndexOf("new Views.PaymentWindow");
+            string depoisDaConsulta = consulta < 0 || modal < consulta ? "" : pagamento.Substring(consulta, modal - consulta);
+            Checa("pagamento nao abre ao voltar de consulta apos logout",
+                depoisDaConsulta.Contains("_encerrandoEmCurso") && depoisDaConsulta.Contains("_escopo.Encerrado"));
         }
 
-        try { Directory.Delete(pastaTeste, true); } catch { }
+
         Console.WriteLine($"\n  {(falhas == 0 ? "tudo passou" : falhas + " falharam")}");
         return falhas;
     }

@@ -85,6 +85,8 @@ namespace PdvPadaria
         private int _valorRecebidoCentavos;
         private string _stockCategoryFilter = "TODOS";
         private List<StockProductView> _remoteStockCache = new List<StockProductView>();
+        private int _stockRequest;
+        private int _alertRequest;
 
         public enum PdvState
         {
@@ -150,6 +152,8 @@ namespace PdvPadaria
 
         protected override void OnClosed(EventArgs e)
         {
+            _syncTimer?.Stop();
+            _escopo.Dispose();
             base.OnClosed(e);
             SafeShowHideTaskbar(true);
         }
@@ -298,10 +302,7 @@ namespace PdvPadaria
             _syncTimer.Tick += async (s, ev) => await RunSincronizacaoSilenciosa();
             _syncTimer.Start();
 
-            // Descobre de que loja é esta máquina ANTES do primeiro sync: quem manda é o
-            // token, e é dele que sai também o estoque que o caixa vai mostrar. Sem isto,
-            // o primeiro ciclo ainda leria pela linha STORE_ID do .env.
-            await StoreIdentityService.ResolverAsync(CurrentUser.StoreId);
+            // A identidade ja foi fixada no login; resolver aqui poderia devolver uma resposta apos o logout.
             AvisarSeIdentidadeEstiverErrada();
 
             // Roda a primeira sincronização assim que abre
@@ -591,25 +592,25 @@ namespace PdvPadaria
                 return;
             }
 
-            if (!TryParseDouble(pesoTexto, out double pesoKg) || pesoKg <= 0)
+            if (!TryParseDouble(pesoTexto, out double pesoKg) || pesoKg <= 0 || pesoKg > 9999.999)
             {
                 Bloqueia("", "Peso inválido. Use por exemplo 0,300 para 300 gramas.");
                 return;
             }
 
-            int precoCentavos = (int)Math.Round(prod.PriceSale * pesoKg);
-            if (precoCentavos <= 0)
+            int pesoGramas = (int)Math.Round(pesoKg * 1000, MidpointRounding.AwayFromZero);
+            if (pesoGramas <= 0 || Math.Abs(pesoKg * 1000 - pesoGramas) > 0.000001)
             {
-                Bloqueia("", "Peso muito pequeno para gerar preço.");
+                Bloqueia("", "Informe o peso em gramas inteiros, com até três casas decimais em kg.");
                 return;
             }
-            if (precoCentavos > Services.WeightBarcodeService.PrecoMaximoCentavos)
+            if (!Services.WeightBarcodeService.TentarCalcularPreco(prod.PriceSale, pesoGramas, out int precoCentavos))
             {
-                Bloqueia("", $"Valor acima do limite da etiqueta (R$ {Services.WeightBarcodeService.PrecoMaximoCentavos / 100.0:F2}). Divida em pacotes menores.");
+                Bloqueia("", $"O valor da etiqueta deve ficar entre R$ 0,01 e R$ {Services.WeightBarcodeService.PrecoMaximoCentavos / 100.0:F2}. Confira o peso ou divida em pacotes menores.");
                 return;
             }
 
-            string? codigo = Services.WeightBarcodeService.Gerar(prod.Barcode, precoCentavos);
+            string? codigo = Services.WeightBarcodeService.Gerar(prod.Barcode, precoCentavos, pesoGramas);
             if (codigo == null)
             {
                 Bloqueia("", "Não foi possível gerar o código de peso deste produto.");
@@ -1104,7 +1105,8 @@ namespace PdvPadaria
                 value = 0;
                 return false;
             }
-            return double.TryParse(text.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out value);
+            return double.TryParse(text.Replace(",", "."), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+                CultureInfo.InvariantCulture, out value) && !double.IsNaN(value) && !double.IsInfinity(value);
         }
 
         public class Bracket
@@ -1572,7 +1574,7 @@ namespace PdvPadaria
                 return;
             }
 
-            if (_encerrando || !await _saleGate.WaitAsync(0)) return;
+            if (_encerrandoEmCurso || _encerrando || !await _saleGate.WaitAsync(0)) return;
 
             try
             {
@@ -1582,11 +1584,12 @@ namespace PdvPadaria
                 // caixa da mesma loja pode ter vendido a última peça — por isso ela continua
                 // existindo mesmo agora que a mesma checagem já roda ANTES do pagamento.
                 if (!await EstoqueDoCarrinhoConfereAsync()) return;
+                _escopo.GarantirAtivo();
 
                 var saleId = Guid.NewGuid().ToString();
 
-                string tenantId = CurrentUser.TenantId;
-                string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
+                string tenantId = _escopo.Sessao.RedeId;
+                string storeId = _escopo.Sessao.LojaId;
 
                 var terminalName = EnvService.Get("TERMINAL_NAME");
                 var sale = new Sale
@@ -1611,7 +1614,7 @@ namespace PdvPadaria
                     sale.ChangeAmount = _valorRecebidoCentavos - _totalCentavos;
                 }
 
-                await App.Database.RunInTransactionAsync((tx) =>
+                await App.Database.RunInTransactionAsync((tx) => _escopo.Sessao.ExecutarSeAtiva(() =>
                 {
                     tx.Insert(sale);
 
@@ -1662,7 +1665,7 @@ namespace PdvPadaria
                             tx.Update(product);
                         }
                     }
-                });
+                }));
 
                 // Prossiga com a impressão do cupom fiscal do PDV
                 await ImprimirCupomFiscalAsync(saleId);
@@ -1699,6 +1702,7 @@ namespace PdvPadaria
 
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
+            if (_encerrandoEmCurso || _sessaoEncerrada) { e.Handled = true; return; }
             if (MainTabControl.SelectedIndex != 0) return;
 
             if (Keyboard.Modifiers != ModifierKeys.None && Keyboard.Modifiers != ModifierKeys.Shift) return;
@@ -1776,13 +1780,16 @@ namespace PdvPadaria
         {
             try
             {
-                // Etiqueta de PESO (preço embutido) é resolvida antes da busca normal:
-                // esse código não existe como produto no banco, ele carrega o preço dentro.
-                // Só entra aqui se casar prefixo "21" + dígito verificador, então código de
-                // fábrica nunca é confundido.
-                if (Services.WeightBarcodeService.TentarLer(barcode, out string refPeso, out int precoPeso))
+                // Etiquetas preservam o preço e o peso da emissão, inclusive após mudança de preço/kg.
+                if (Services.WeightBarcodeService.TentarLer(barcode, out string refPeso, out int precoPeso, out int pesoGramas))
                 {
-                    await ProcessarEtiquetaPesoAsync(barcode, refPeso, precoPeso);
+                    if (pesoGramas == 0)
+                    {
+                        MessageBox.Show("Esta etiqueta antiga não informa o peso original. Pese o pacote e imprima uma nova etiqueta antes de vender.",
+                            "Reemitir etiqueta", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                    await ProcessarEtiquetaPesoAsync(barcode, refPeso, precoPeso, pesoGramas);
                     return;
                 }
 
@@ -1827,15 +1834,16 @@ namespace PdvPadaria
 
         // Trata a leitura de uma etiqueta de peso: descobre o produto pelo trecho de
         // identificação do código e usa o preço que veio embutido na própria etiqueta.
-        private async Task ProcessarEtiquetaPesoAsync(string codigoLido, string refProduto, int precoCentavos)
+        private async Task ProcessarEtiquetaPesoAsync(string codigoLido, string refProduto, int precoCentavos, int pesoGramas)
         {
             var connection = App.Database.GetConnection();
 
             // O identificador do produto vem dos últimos dígitos da sequência do código
             // interno, então a comparação é feita em memória sobre os produtos ativos.
             var ativos = await connection.Table<Product>().Where(p => p.Active).ToListAsync();
-            var product = ativos.FirstOrDefault(p =>
-                Services.WeightBarcodeService.ExtrairRefProduto(p.Barcode) == refProduto);
+            var encontrados = ativos.Where(p => p.UnitMeasure == "KG" &&
+                Services.WeightBarcodeService.ExtrairRefProduto(p.Barcode) == refProduto).ToList();
+            var product = encontrados.Count == 1 ? encontrados[0] : null;
 
             if (product == null)
             {
@@ -1844,8 +1852,7 @@ namespace PdvPadaria
                 return;
             }
 
-            // Recupera o peso a partir do preço impresso e do preço do quilo cadastrado.
-            double pesoKg = product.PriceSale > 0 ? (double)precoCentavos / product.PriceSale : 0;
+            double pesoKg = pesoGramas / 1000.0;
 
             if (_currentState == PdvState.Consultation)
             {
@@ -1885,10 +1892,10 @@ namespace PdvPadaria
                 ProductName = product.Name,
                 ProductType = product.Type,
                 Quantity = pesoKg,
-                PriceUnit = product.PriceSale,
+                PriceUnit = (int)Math.Round(precoCentavos / pesoKg, MidpointRounding.AwayFromZero),
                 Subtotal = precoCentavos,
                 IsPesado = true,
-                Details = $"{pesoKg:F3} kg x R$ {product.PriceSale / 100.0:F2}/kg"
+                Details = $"Etiqueta: {pesoKg:F3} kg por R$ {precoCentavos / 100.0:F2}"
             });
 
             UpdateTotals();
@@ -1990,12 +1997,13 @@ namespace PdvPadaria
 
         private async void AbrirModalPagamento()
         {
-            if (_abrindoPagamento) return;
+            if (_abrindoPagamento || _encerrandoEmCurso || _sessaoEncerrada || _escopo.Encerrado) return;
             _abrindoPagamento = true;
             try
             {
                 // Recusa ANTES de o dinheiro entrar. Ver EstoqueDoCarrinhoConfereAsync.
                 if (!await EstoqueDoCarrinhoConfereAsync()) return;
+                if (_encerrandoEmCurso || _sessaoEncerrada || _escopo.Encerrado) return;
 
                 var paymentWindow = new Views.PaymentWindow(_totalCentavos);
                 paymentWindow.Owner = this;
@@ -2289,14 +2297,7 @@ namespace PdvPadaria
             // método assíncrono aqui, então cancela-se esta passada e fecha-se de novo no fim.
             e.Cancel = true;
             if (_encerrandoEmCurso) return; // logout já está encerrando; ele fecha a janela
-            try { await EncerrarSessaoAsync(); }
-            finally
-            {
-                // Fecha aconteça o que acontecer. Cancelar o fechamento e depois falhar antes
-                // do Close() deixaria o caixa impossível de fechar.
-                _sessaoEncerrada = true;
-                Close();
-            }
+            if (await EncerrarSessaoAsync()) Close();
         }
 
         /// <summary>
@@ -2308,29 +2309,37 @@ namespace PdvPadaria
         /// </summary>
         private bool _encerrandoEmCurso;
 
-        private async Task EncerrarSessaoAsync()
+        private async Task<bool> EncerrarSessaoAsync()
         {
             // O encerramento leva segundos (envio final). Sem esta trava, um segundo clique
             // no Sair — ou o X durante o logout — rodaria tudo de novo e abriria duas telas
             // de login.
-            if (_sessaoEncerrada || _encerrandoEmCurso) return;
+            if (_sessaoEncerrada) return true;
+            if (_encerrandoEmCurso) return false;
             _encerrandoEmCurso = true;
+            IsEnabled = false;
 
             var resultado = ResultadoDoEncerramento.FicouPendente;
             try
             {
                 _syncTimer?.Stop();
 
-                // Espera venda e sync em curso — mas COM LIMITE. Sem ele, uma trava que não
-                // fosse liberada (venda que falhou no meio) deixaria a janela cancelada para
-                // sempre: o caixa não fecharia nem pelo X, e alguém mataria pelo Gerenciador,
-                // que é encerramento sujo. Fechar tarde é melhor que não fechar.
-                if (await _saleGate.WaitAsync(TimeSpan.FromSeconds(5))) _saleGate.Release();
+                // Uma venda ja paga precisa terminar antes de permitir outro login.
+                if (!await _saleGate.WaitAsync(TimeSpan.FromSeconds(5)))
+                {
+                    _encerrandoEmCurso = false;
+                    IsEnabled = true;
+                    _syncTimer?.Start();
+                    MessageBox.Show("Uma venda ainda está sendo concluída. Aguarde a gravação e a impressão antes de sair.",
+                        "Venda em andamento", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return false;
+                }
+                _saleGate.Release();
                 if (await _syncGate.WaitAsync(TimeSpan.FromSeconds(5))) _syncGate.Release();
 
                 SyncStatusText.Text = "Enviando o que falta...";
                 resultado = await _escopo.EncerrarAsync(
-                    async () => (await SincronizarDadosNuvem()).Item1,
+                    async () => (await SincronizarDadosNuvem(aguardarCiclo: true)).Item1,
                     TimeSpan.FromSeconds(10));
             }
             catch (Exception ex)
@@ -2363,17 +2372,19 @@ namespace PdvPadaria
                     "responsável antes.",
                     "Ficou coisa para enviar", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+            return true;
         }
 
         private async void LogoutButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_encerrandoEmCurso || _sessaoEncerrada) return;
             if (KioskToggle.IsChecked == true)
             {
                 MessageBox.Show("Desative o Modo Tela Cheia antes de fazer logout.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            await EncerrarSessaoAsync();
+            if (!await EncerrarSessaoAsync()) return;
 
             var login = new LoginWindow();
             login.Show();
@@ -2849,6 +2860,9 @@ namespace PdvPadaria
         // Carrega o estoque de uma loja remota a partir da nuvem (somente dono).
         private async Task LoadRemoteStock(string storeId)
         {
+            int request = ++_stockRequest;
+            _remoteStockCache.Clear();
+            StockProductsList.ItemsSource = null;
             try
             {
                 var (from, to) = GetRedePeriodo();
@@ -2871,6 +2885,7 @@ namespace PdvPadaria
 
                 var resp = await _redeHttp.SendAsync(req);
                 string body = await resp.Content.ReadAsStringAsync();
+                if (request != _stockRequest || storeId != _stockRemoteStoreId || _escopo.Encerrado) return;
                 if (!resp.IsSuccessStatusCode)
                 {
                     MessageBox.Show($"Sem conexão com a nuvem ({(int)resp.StatusCode}).", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -2915,6 +2930,7 @@ namespace PdvPadaria
             }
             catch (Exception ex)
             {
+                if (request != _stockRequest || storeId != _stockRemoteStoreId || _escopo.Encerrado) return;
                 MessageBox.Show("Sem conexão com a nuvem.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
                 System.Diagnostics.Debug.WriteLine($"[LoadRemoteStock Error]: {ex.Message}");
             }
@@ -2994,14 +3010,13 @@ namespace PdvPadaria
                     MessageBox.Show("Digite uma quantidade válida.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
-                double newQty = combo.SelectedIndex == 0 ? estoqueAtual + inputVal : inputVal;
-                if (newQty < 0)
+                if (inputVal < 0)
                 {
                     MessageBox.Show("O saldo do estoque não pode ser negativo.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
                 confirmBtn.IsEnabled = false;
-                var (ok, err) = await SetEstoqueLojaAsync(storeId, productId, newQty);
+                var (ok, err) = await SetEstoqueLojaAsync(storeId, productId, inputVal, somar: combo.SelectedIndex == 0);
                 if (ok)
                 {
                     win.Close();
@@ -3023,7 +3038,7 @@ namespace PdvPadaria
         }
 
         // POST na RPC set_estoque_loja (dono grava o saldo da loja na nuvem).
-        private async Task<(bool ok, string err)> SetEstoqueLojaAsync(string storeId, string productId, double quantity)
+        private async Task<(bool ok, string err)> SetEstoqueLojaAsync(string storeId, string productId, double quantity, bool somar = false)
         {
             try
             {
@@ -3041,14 +3056,17 @@ namespace PdvPadaria
                 var content = new System.Net.Http.StringContent(
                     Newtonsoft.Json.JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
                 using var req = new System.Net.Http.HttpRequestMessage(
-                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/set_estoque_loja");
+                    System.Net.Http.HttpMethod.Post, baseUrl + "/rest/v1/rpc/" + (somar ? "somar_estoque_loja" : "set_estoque_loja"));
                 req.Content = content;
                 req.Headers.Add("apikey", anon);
                 req.Headers.Add("Authorization", "Bearer " + anon);
 
                 var resp = await _redeHttp.SendAsync(req);
                 string body = await resp.Content.ReadAsStringAsync();
-                if (!resp.IsSuccessStatusCode) return (false, $"HTTP {(int)resp.StatusCode}");
+                if (!resp.IsSuccessStatusCode) return (false,
+                    somar && resp.StatusCode == System.Net.HttpStatusCode.NotFound
+                        ? "A nuvem ainda não recebeu a atualização para somar estoque."
+                        : $"HTTP {(int)resp.StatusCode}. Recarregue o estoque antes de tentar novamente.");
                 var j = Newtonsoft.Json.Linq.JObject.Parse(body);
                 if (j["error"] != null)
                 {
@@ -3056,11 +3074,15 @@ namespace PdvPadaria
                     return (false, err == "invalid_credentials" ? "faça login online como dono"
                         : err == "forbidden" ? "sem permissão" : err);
                 }
+                if (somar && (bool?)j["success"] != true)
+                    return (false, "A nuvem não confirmou a reposição. Recarregue o estoque antes de tentar novamente.");
+                if (!somar && ((bool?)j["ok"] != true || (int?)j["aplicados"] != 1))
+                    return (false, "A nuvem não confirmou o ajuste deste produto. Recarregue o estoque antes de tentar novamente.");
                 return (true, string.Empty);
             }
             catch (Exception ex)
             {
-                return (false, ex.Message);
+                return (false, ex.Message + " Recarregue o estoque antes de tentar novamente.");
             }
         }
 
@@ -3107,9 +3129,12 @@ namespace PdvPadaria
         // Carrega os alertas de estoque de uma loja remota a partir da nuvem.
         private async Task LoadRemoteAlerts(string storeId)
         {
+            int request = ++_alertRequest;
+            StockAlertsList.ItemsSource = null;
             try
             {
                 var arr = await FetchLojaDetalheEstoque(storeId);
+                if (request != _alertRequest || storeId != _alertRemoteStoreId || _escopo.Encerrado) return;
                 if (arr == null) { StockAlertsList.ItemsSource = null; return; }
 
                 var alerts = new List<StockAlertView>();
@@ -3141,6 +3166,7 @@ namespace PdvPadaria
             }
             catch (Exception ex)
             {
+                if (request != _alertRequest || storeId != _alertRemoteStoreId || _escopo.Encerrado) return;
                 MessageBox.Show("Sem conexão com a nuvem.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
                 System.Diagnostics.Debug.WriteLine($"[LoadRemoteAlerts Error]: {ex.Message}");
             }
@@ -3607,8 +3633,8 @@ namespace PdvPadaria
                 if (string.IsNullOrEmpty(nome)) { MessageBox.Show("O nome do produto é obrigatório.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
                 string barcode = txtBarcode.Text.Trim();
                 if (string.IsNullOrEmpty(barcode)) { MessageBox.Show("O código de barras é obrigatório.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
-                if (!TryParseDouble(txtPrecoVenda.Text, out double vendaVal) || vendaVal < 0 ||
-                    !TryParseDouble(txtPrecoCusto.Text, out double custoVal) || custoVal < 0)
+                if (!MoneyInput.TentarLerCentavos(txtPrecoVenda.Text, out int vendaCentavos) ||
+                    !MoneyInput.TentarLerCentavos(txtPrecoCusto.Text, out int custoCentavos))
                 {
                     MessageBox.Show("Preços inválidos.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning); return;
                 }
@@ -3632,8 +3658,8 @@ namespace PdvPadaria
                         p_nome = nome,
                         p_tipo = tipo,
                         p_unidade = unidade,
-                        p_preco_venda = (int)Math.Round(vendaVal * 100),
-                        p_preco_custo = (int)Math.Round(custoVal * 100),
+                        p_preco_venda = vendaCentavos,
+                        p_preco_custo = custoCentavos,
                         p_categoria_id = catId,
                         p_codigo_barras = string.IsNullOrEmpty(barcode) ? null : barcode
                     };
@@ -3642,6 +3668,7 @@ namespace PdvPadaria
                     req.Headers.Add("apikey", anon);
                     req.Headers.Add("Authorization", "Bearer " + anon);
                     var resp = await _redeHttp.SendAsync(req);
+                    resp.EnsureSuccessStatusCode();
                     var j = Newtonsoft.Json.Linq.JObject.Parse(await resp.Content.ReadAsStringAsync());
                     if (j["error"] != null)
                     {
@@ -3655,6 +3682,8 @@ namespace PdvPadaria
                         confirmBtn.IsEnabled = true; confirmBtn.Content = "Cadastrar Produto";
                         return;
                     }
+                    if ((bool?)j["success"] != true)
+                        throw new InvalidOperationException("A nuvem não confirmou a gravação do produto.");
 
                     // Quando um produto com este código de barras já existia mas estava INATIVO
                     // (excluído antes), a RPC reativa a linha em vez de criar uma nova — evita
@@ -3747,8 +3776,8 @@ namespace PdvPadaria
             txtNome.Text = productToEdit.Name;
             txtBarcode.Text = productToEdit.Barcode;
             cmbUnidade.SelectedItem = productToEdit.UnitMeasure;
-            txtPrecoVenda.Text = (productToEdit.PriceSale / 100.0).ToString("F2");
-            txtPrecoCusto.Text = (productToEdit.PriceCost / 100.0).ToString("F2");
+            txtPrecoVenda.Text = (productToEdit.PriceSale / 100m).ToString("F2", new CultureInfo("pt-BR"));
+            txtPrecoCusto.Text = (productToEdit.PriceCost / 100m).ToString("F2", new CultureInfo("pt-BR"));
             txtMinStock.Text = productToEdit.MinStock.ToString();
 
             stack.Children.Add(createField("Nome do Produto", txtNome));
@@ -3854,16 +3883,13 @@ namespace PdvPadaria
                     MessageBox.Show("Selecione uma categoria.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
-                if (!TryParseDouble(txtPrecoVenda.Text, out double priceSaleVal) || priceSaleVal < 0 ||
-                    !TryParseDouble(txtPrecoCusto.Text, out double priceCostVal) || priceCostVal < 0 ||
+                if (!MoneyInput.TentarLerCentavos(txtPrecoVenda.Text, out int priceSaleCents) ||
+                    !MoneyInput.TentarLerCentavos(txtPrecoCusto.Text, out int priceCostCents) ||
                     !TryParseDouble(txtMinStock.Text, out double minStockVal) || minStockVal < 0)
                 {
                     MessageBox.Show("Preencha valores numéricos válidos e não negativos.", "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
-
-                int priceSaleCents = (int)Math.Round(priceSaleVal * 100);
-                int priceCostCents = (int)Math.Round(priceCostVal * 100);
 
                 confirmBtn.IsEnabled = false; confirmBtn.Content = "Salvando...";
                 try
@@ -3886,6 +3912,7 @@ namespace PdvPadaria
                     req.Headers.Add("apikey", anon);
                     req.Headers.Add("Authorization", "Bearer " + anon);
                     var resp = await _redeHttp.SendAsync(req);
+                    resp.EnsureSuccessStatusCode();
                     var j = Newtonsoft.Json.Linq.JObject.Parse(await resp.Content.ReadAsStringAsync());
                     if (j["error"] != null)
                     {
@@ -3898,20 +3925,18 @@ namespace PdvPadaria
                         confirmBtn.IsEnabled = true; confirmBtn.Content = "Salvar Alterações";
                         return;
                     }
+                    if ((bool?)j["success"] != true)
+                        throw new InvalidOperationException("A nuvem não confirmou a gravação do produto.");
 
                     // Cloud confirmou: aplica localmente de imediato (mesmo padrão do Delete) —
                     // não depende do próximo ciclo de sync para refletir na tela.
                     var conn = App.Database.GetConnection();
-                    productToEdit.Name = name;
-                    productToEdit.Barcode = string.IsNullOrEmpty(barcode) ? null : barcode;
-                    productToEdit.CategoryId = catId;
-                    productToEdit.Type = tipo;
-                    productToEdit.UnitMeasure = unidade;
-                    productToEdit.PriceSale = priceSaleCents;
-                    productToEdit.PriceCost = priceCostCents;
-                    productToEdit.MinStock = minStockVal;
-                    productToEdit.UpdatedAt = DateTime.Now;
-                    await conn.UpdateAsync(productToEdit);
+                    _escopo.GarantirAtivo();
+                    await conn.ExecuteAsync(
+                        "UPDATE Product SET Name=?, Barcode=?, CategoryId=?, Type=?, UnitMeasure=?, " +
+                        "PriceSale=?, PriceCost=?, MinStock=?, UpdatedAt=? WHERE Id=?",
+                        name, string.IsNullOrEmpty(barcode) ? null : barcode, catId, tipo, unidade,
+                        priceSaleCents, priceCostCents, minStockVal, DateTime.Now, productToEdit.Id);
 
                     formWindow.Close();
                     MessageBox.Show("Produto atualizado com sucesso!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -3998,10 +4023,9 @@ namespace PdvPadaria
                         }
 
                         // 2. Se inativou com sucesso na nuvem, aplica localmente no SQLite
-                        product.Active = false;
-                        product.UpdatedAt = DateTime.Now;
-
-                        await connection.UpdateAsync(product);
+                        _escopo.GarantirAtivo();
+                        await connection.ExecuteAsync("UPDATE Product SET Active=0, UpdatedAt=? WHERE Id=?",
+                            DateTime.Now, product.Id);
                         MessageBox.Show("Produto inativado com sucesso!", "Sucesso", MessageBoxButton.OK, MessageBoxImage.Information);
                         
                         LoadStock(SearchStockBox.Text.Trim());
@@ -4490,7 +4514,7 @@ namespace PdvPadaria
 
         private async Task<(bool Success, string Error)> SincronizarDadosNuvem(bool aguardarCiclo = false)
         {
-            if (_encerrando) return (true, string.Empty);
+            if (_encerrando || _escopo.Encerrado) return (false, "Sessão encerrada.");
 
             // Trava anti-sobreposição ATÔMICA: timer de 60s, botão manual e o sync disparado após
             // venda/cancelamento podem vir de threads diferentes. WaitAsync(0) não bloqueia — se já
@@ -4501,12 +4525,12 @@ namespace PdvPadaria
                 return (true, string.Empty);
             try
             {
-                if (_encerrando) return (true, string.Empty);
+                if (_encerrando || _escopo.Encerrado) return (false, "Sessão encerrada.");
 
                 using var syncService = new SyncService(App.Database.GetSyncConnection(), _escopo.Sessao);
 
-                string tenantId = CurrentUser.TenantId;
-                string storeId = StoreIdentityService.Atual(CurrentUser.StoreId);
+                string tenantId = _escopo.Sessao.RedeId;
+                string storeId = _escopo.Sessao.LojaId;
 
                 bool pushSuccess = await syncService.PushSalesAsync(tenantId, storeId);
                 bool pullSuccess = pushSuccess
@@ -4519,6 +4543,7 @@ namespace PdvPadaria
                     .CountAsync();
 
                 Dispatcher.Invoke(() => {
+                    if (_escopo.Encerrado) return;
                     // O catálogo de sugestões da tela de VENDA é uma cópia em memória que só é
                     // relida quando fica vazia (ObterCatalogoAsync). PullUpdatesAsync acabou de
                     // gravar preço, estoque e produtos novos/inativados no SQLite — sem isto, o

@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 
 namespace PdvPadaria.Services
 {
@@ -19,12 +20,17 @@ namespace PdvPadaria.Services
     ///
     /// A GERAÇÃO
     /// Carimba a sessão. Serve para descartar o que chega atrasado: uma resposta de rede
-    /// iniciada na sessão anterior não pode gravar nada na atual. Hoje as travas de venda e
-    /// sincronização cobrem a maior parte disso; a geração é o que fecha o resto, quando as
-    /// operações passarem a carregá-la.
+    /// iniciada na sessão anterior não pode gravar nada na atual. O encerramento cancela
+    /// a rede e compartilha a trava dos efeitos, impedindo gravações após o logout.
     /// </summary>
     public sealed class Sessao
     {
+        private readonly object _efeitos = new object();
+        private readonly CancellationTokenSource _encerramento = new CancellationTokenSource();
+        private bool _encerrada;
+
+        internal CancellationToken Cancelamento => _encerramento.Token;
+
         public string Geracao { get; }
         public string UsuarioId { get; }
         public string Papel { get; }
@@ -50,5 +56,36 @@ namespace PdvPadaria.Services
             !string.IsNullOrEmpty(geracao) && string.Equals(geracao, Geracao, StringComparison.Ordinal);
 
         public bool EhDono => string.Equals(Papel, "DONO", StringComparison.OrdinalIgnoreCase);
+
+        public void GarantirAtiva()
+        {
+            lock (_efeitos)
+            {
+                if (_encerrada) throw new ObjectDisposedException(nameof(Sessao));
+            }
+        }
+
+        // A verificacao e o efeito usam a mesma trava do logout, sem uma janela entre os dois.
+        internal T ExecutarSeAtiva<T>(Func<T> operacao)
+        {
+            lock (_efeitos)
+            {
+                GarantirAtiva();
+                return operacao();
+            }
+        }
+
+        internal void ExecutarSeAtiva(Action operacao) =>
+            ExecutarSeAtiva(() => { operacao(); return true; });
+
+        internal void Encerrar()
+        {
+            lock (_efeitos)
+            {
+                if (_encerrada) return;
+                _encerrada = true;
+            }
+            _encerramento.Cancel();
+        }
     }
 }

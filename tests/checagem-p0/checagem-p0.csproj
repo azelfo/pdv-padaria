@@ -5,12 +5,12 @@
 
     Compila os servicos do PDV direto do codigo-fonte, sem tocar no projeto WPF,
     e exercita as decisoes que importam:
-      - o instalador so roda se vier do repositorio oficial E com a impressao
-        digital conferindo;
+      - a impressao digital do instalador e calculada corretamente, sem baixar ou executar;
       - o estado da sessao morre no logout e a sessao seguinte recomeca do zero.
 
     Roda em qualquer maquina com dotnet:  dotnet run (a partir de tests/checagem-p0)
-    Precisa do PdvPadaria/.env ao lado do executavel (o Directory.Build copia).
+    Usa apenas configuracao ficticia e arquivos temporarios proprios, sem acesso a nuvem.
+    A integracao HTTP isolada fica em ../regressao-sync; a API publica em ../testes_api.py.
   -->
 
   <PropertyGroup>
@@ -41,8 +41,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\PdvPadaria\.env" Condition="Exists('..\..\PdvPadaria\.env')">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <None Include="env.teste">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <Link>.env</Link>
     </None>
   </ItemGroup>

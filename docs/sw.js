@@ -1,4 +1,4 @@
-const CACHE = 'padaria-v12';
+const CACHE = 'padaria-v13';
 const CORE = ['./', './index.html', './manifest.json', './logo.png'];
 
 self.addEventListener('install', e => {
@@ -19,7 +19,8 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  if (e.request.url.includes('supabase.co')) return;
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin || url.pathname.endsWith('/version.json') || url.pathname.endsWith('/baixar.html')) return;
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;

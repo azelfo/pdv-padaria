@@ -1,10 +1,10 @@
 using System;
-using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using PdvPadaria.Services;
 
 namespace PdvPadaria.Views
 {
@@ -29,6 +29,7 @@ namespace PdvPadaria.Views
 
         public PaymentWindow(int totalCentavos)
         {
+            if (totalCentavos < 0) throw new ArgumentOutOfRangeException(nameof(totalCentavos));
             InitializeComponent();
             _totalCentavos = totalCentavos;
             
@@ -67,10 +68,6 @@ namespace PdvPadaria.Views
                     CashReceivedInput.Focus();
                     Keyboard.Focus(CashReceivedInput);
                 }), System.Windows.Threading.DispatcherPriority.Input);
-            }
-            else if (mode == PaymentMode.Pix)
-            {
-                _ = StartPaymentDelay(FinishPixBtn, PixLoaderPanel, TxtPixCountdown);
             }
             else if (mode == PaymentMode.Card)
             {
@@ -149,9 +146,10 @@ namespace PdvPadaria.Views
         private void CashReceivedInput_TextChanged(object sender, TextChangedEventArgs e)
         {
             string raw = CashReceivedInput.Text;
-            if (TryParseDouble(raw, out double receivedVal))
+            ReceivedAmountCentavos = 0;
+            ChangeAmountCentavos = 0;
+            if (MoneyInput.TentarLerCentavos(raw, out int receivedCentavos))
             {
-                int receivedCentavos = (int)Math.Round(receivedVal * 100);
                 int trocoCentavos = receivedCentavos - _totalCentavos;
 
                 if (trocoCentavos >= 0)
@@ -198,8 +196,12 @@ namespace PdvPadaria.Views
 
         private void FinishCashBtn_Click(object sender, RoutedEventArgs e)
         {
-            if (FinishCashBtn.IsEnabled)
+            if (_currentMode == PaymentMode.Cash
+                && MoneyInput.TentarLerCentavos(CashReceivedInput.Text, out int recebido)
+                && recebido >= _totalCentavos)
             {
+                ReceivedAmountCentavos = recebido;
+                ChangeAmountCentavos = recebido - _totalCentavos;
                 DialogResult = true;
                 Close();
             }
@@ -207,6 +209,7 @@ namespace PdvPadaria.Views
 
         private void ConfirmPayment_Click(object sender, RoutedEventArgs e)
         {
+            if (_currentMode != PaymentMode.Pix && _currentMode != PaymentMode.Card) return;
             if (_paymentDelayRemaining > 0) return;
             DialogResult = true;
             Close();
@@ -285,20 +288,5 @@ namespace PdvPadaria.Views
             }
         }
 
-        private bool TryParseDouble(string input, out double val)
-        {
-            val = 0;
-            if (string.IsNullOrWhiteSpace(input)) return false;
-            
-            input = input.Trim().Replace("R$", "").Trim();
-            
-            // O .NET Framework 4.8 não tem a sobrecarga TryParse(string, IFormatProvider, out)
-            // — só a que recebe NumberStyles junto. NumberStyles.Any aceita separador de
-            // milhar, sinal e decimal, que é o comportamento desejado aqui.
-            if (double.TryParse(input.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out val)) return true;
-            if (double.TryParse(input.Replace('.', ','), NumberStyles.Any, new CultureInfo("pt-BR"), out val)) return true;
-            
-            return false;
-        }
     }
 }

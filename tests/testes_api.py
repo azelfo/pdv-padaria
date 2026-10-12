@@ -77,6 +77,27 @@ def checa(nome, condicao, detalhe=""):
     resultados.append((nome, bool(condicao), detalhe))
 
 
+def leitura_negada(status, corpo):
+    if status in (401, 403):
+        return True
+    if status != 200:
+        return False
+    try:
+        return json.loads(corpo) == []
+    except ValueError:
+        return False
+
+
+def teste_respostas_de_leitura():
+    for status, corpo, esperado in (
+        (200, '[]', True), (200, '[{"id":"exposto"}]', False),
+        (200, '{}', False), (200, 'invalido', False),
+        (0, '', False), (404, '{}', False), (521, '', False),
+        (401, '{}', True), (403, '{}', True),
+    ):
+        assert leitura_negada(status, corpo) == esperado, (status, corpo)
+
+
 # ---------------------------------------------------------------------------
 # 1. VAZAMENTO ENTRE REDES  (falha hoje -- e o problema)
 #
@@ -93,8 +114,8 @@ def teste_vazamento():
             linhas = []
         checa(
             f"[vazamento] {tabela} nao entrega linha sem recorte de rede",
-            len(linhas) == 0,
-            f"devolveu {len(linhas)} linha(s) para a chave publica",
+            leitura_negada(status, corpo),
+            f"HTTP {status}; devolveu {len(linhas) if isinstance(linhas, list) else '?'} linha(s) para a chave publica",
         )
 
 
@@ -108,11 +129,10 @@ def teste_nega_por_padrao():
             linhas = json.loads(corpo) if status == 200 else []
         except ValueError:
             linhas = []
-        vazio = not isinstance(linhas, list) or len(linhas) == 0
         checa(
             f"[nega] {tabela} nao responde a chave publica",
-            vazio,
-            f"devolveu {len(linhas) if isinstance(linhas, list) else '?'} linha(s)",
+            leitura_negada(status, corpo),
+            f"HTTP {status}; devolveu {len(linhas) if isinstance(linhas, list) else '?'} linha(s)",
         )
 
 
@@ -159,6 +179,20 @@ def teste_identidade():
                            "p_terminal": "teste"})
     checa("[identidade] credencial errada nao emite credencial de maquina",
           status == 200 and "credenciais_invalidas" in corpo, f"corpo={corpo[:80]}")
+
+
+def teste_soma_estoque():
+    status, corpo = pedir("/rest/v1/rpc/somar_estoque_loja",
+                          {"p_email": "ninguem@invalido.local", "p_password": "errada",
+                           "p_store_id": "loja-inexistente", "p_items": []})
+    try:
+        resposta = json.loads(corpo)
+    except ValueError:
+        resposta = None
+    checa("[estoque] soma atomica publicada recusa credencial invalida",
+          status == 200 and isinstance(resposta, dict)
+          and resposta.get("error") == "invalid_credentials",
+          f"status={status} corpo={corpo[:80]}")
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +249,10 @@ def garantir_conexao():
 
 
 def main():
+    teste_respostas_de_leitura()
     garantir_conexao()
     for t in (teste_vazamento, teste_nega_por_padrao, teste_recusa_no_corpo,
-              teste_leitura_recortada, teste_identidade, teste_instalador,
+              teste_leitura_recortada, teste_identidade, teste_soma_estoque, teste_instalador,
               teste_versao_declara_digital):
         t()
 

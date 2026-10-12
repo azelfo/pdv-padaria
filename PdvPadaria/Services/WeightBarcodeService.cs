@@ -1,103 +1,93 @@
 using System;
+using System.Globalization;
 
 namespace PdvPadaria.Services
 {
-    /// <summary>
-    /// Código de barras de PESO com preço embutido (mesmo truque que supermercado usa
-    /// na balança etiquetadora, aqui feito a partir do peso digitado à mão).
-    ///
-    /// Formato (13 dígitos, EAN-13 válido):  "21" + PPPPP + VVVVV + C
-    ///   21    -> prefixo que marca "etiqueta pesada". Não colide com o código interno
-    ///            de unidade (gerar_codigo_interno gera "2" + sequência de 11 dígitos,
-    ///            que na prática sempre sai como "20..."), nem com produto de fábrica
-    ///            (no Brasil sempre 789/790).
-    ///   PPPPP -> últimos 5 dígitos da sequência do código interno do produto. Serve
-    ///            para o caixa saber QUAL produto é, sem precisar de coluna nova no banco.
-    ///   VVVVV -> preço já calculado, em centavos (até 99999 = R$ 999,99).
-    ///   C     -> dígito verificador EAN-13.
-    ///
-    /// O preço vai embutido (e não o peso) de propósito: a etiqueta impressa mostra
-    /// R$ X ao cliente, e o caixa cobra exatamente esse valor mesmo que o preço por
-    /// quilo mude entre a pesagem e o pagamento.
-    /// </summary>
     public static class WeightBarcodeService
     {
-        public const string Prefixo = "21";
-        public const int PrecoMaximoCentavos = 99999; // R$ 999,99
+        // Code128: versão + produto(5) + centavos(5) + gramas(7), independente do preço atual.
+        public const string Prefixo = "PDV1";
+        public const int PrecoMaximoCentavos = 99999;
+        public const int PesoMaximoGramas = 9999999;
 
-        /// <summary>
-        /// Extrai os 5 dígitos que identificam o produto a partir do código interno dele
-        /// ("2" + sequência de 11 + verificador). Retorna null se o produto não tiver um
-        /// código interno válido (ex.: código de fábrica ou código curto digitado à mão).
-        /// </summary>
         public static string? ExtrairRefProduto(string? barcodeInterno)
         {
             if (string.IsNullOrWhiteSpace(barcodeInterno)) return null;
-            // "!" porque no .NET Framework o IsNullOrWhiteSpace não carrega a anotação
-            // [NotNullWhen(false)] que o compilador usa para saber que aqui não é nulo.
-            var b = barcodeInterno!.Trim();
-            if (b.Length != 13 || !SoDigitos(b)) return null;
-            if (b[0] != '2') return null;
-            if (b.StartsWith(Prefixo)) return null; // já é uma etiqueta de peso, não um produto
-
-            // "2" + sequência(11) + verificador(1) -> pega os últimos 5 da sequência
-            string sequencia = b.Substring(1, 11);
-            return sequencia.Substring(sequencia.Length - 5);
+            string codigo = barcodeInterno!.Trim();
+            if (codigo.Length != 13 || !SoDigitos(codigo) || codigo[0] != '2'
+                || codigo.StartsWith("21", StringComparison.Ordinal)
+                || CalcularDigitoEan13(codigo.Substring(0, 12)) != codigo[12] - '0')
+                return null;
+            return codigo.Substring(7, 5);
         }
 
-        /// <summary>True se este produto pode receber etiqueta de peso (tem código interno).</summary>
         public static bool SuportaEtiquetaPeso(string? barcodeInterno) => ExtrairRefProduto(barcodeInterno) != null;
 
-        /// <summary>
-        /// Monta o código de barras da etiqueta de peso. Retorna null se o produto não
-        /// tiver código interno ou se o preço estiver fora da faixa representável.
-        /// </summary>
-        public static string? Gerar(string? barcodeInterno, int precoCentavos)
+        public static bool TentarCalcularPreco(int precoQuiloCentavos, int pesoGramas, out int precoCentavos)
         {
-            var refProduto = ExtrairRefProduto(barcodeInterno);
-            if (refProduto == null) return null;
-            if (precoCentavos <= 0 || precoCentavos > PrecoMaximoCentavos) return null;
-
-            string doze = Prefixo + refProduto + precoCentavos.ToString("D5");
-            return doze + CalcularDigitoEan13(doze).ToString();
+            precoCentavos = 0;
+            if (precoQuiloCentavos <= 0 || pesoGramas <= 0 || pesoGramas > PesoMaximoGramas)
+                return false;
+            decimal preco = decimal.Round(precoQuiloCentavos * (decimal)pesoGramas / 1000m,
+                0, MidpointRounding.AwayFromZero);
+            if (preco <= 0 || preco > PrecoMaximoCentavos) return false;
+            precoCentavos = (int)preco;
+            return true;
         }
 
-        /// <summary>
-        /// Tenta interpretar um código lido no caixa como etiqueta de peso.
-        /// Só aceita se for 13 dígitos, começar com "21" e o verificador bater —
-        /// assim um código de fábrica nunca é confundido com etiqueta de peso.
-        /// </summary>
-        public static bool TentarLer(string? codigo, out string refProduto, out int precoCentavos)
+        public static string? Gerar(string? barcodeInterno, int precoCentavos, int pesoGramas)
+        {
+            string? referencia = ExtrairRefProduto(barcodeInterno);
+            if (referencia == null || precoCentavos <= 0 || precoCentavos > PrecoMaximoCentavos
+                || pesoGramas <= 0 || pesoGramas > PesoMaximoGramas)
+                return null;
+            return Prefixo + referencia + precoCentavos.ToString("D5", CultureInfo.InvariantCulture)
+                + pesoGramas.ToString("D7", CultureInfo.InvariantCulture);
+        }
+
+        public static bool TentarLer(string? codigo, out string refProduto, out int precoCentavos, out int pesoGramas)
         {
             refProduto = string.Empty;
             precoCentavos = 0;
-
+            pesoGramas = 0;
             if (string.IsNullOrWhiteSpace(codigo)) return false;
-            var c = codigo!.Trim();
-            if (c.Length != 13 || !SoDigitos(c)) return false;
-            if (!c.StartsWith(Prefixo)) return false;
-            if (CalcularDigitoEan13(c.Substring(0, 12)) != (c[12] - '0')) return false;
+            string etiqueta = codigo!.Trim();
 
-            refProduto = c.Substring(2, 5);
-            if (!int.TryParse(c.Substring(7, 5), out precoCentavos)) return false;
-            return precoCentavos > 0;
+            if (etiqueta.Length == 21 && etiqueta.StartsWith(Prefixo, StringComparison.Ordinal)
+                && SoDigitos(etiqueta.Substring(4)))
+            {
+                int preco = int.Parse(etiqueta.Substring(9, 5), CultureInfo.InvariantCulture);
+                int peso = int.Parse(etiqueta.Substring(14, 7), CultureInfo.InvariantCulture);
+                if (preco <= 0 || peso <= 0) return false;
+                refProduto = etiqueta.Substring(4, 5);
+                precoCentavos = preco;
+                pesoGramas = peso;
+                return true;
+            }
+
+            // EAN21 antigo não guarda peso: reconhecer permite pedir reemissão sem inventar quantidade.
+            if (etiqueta.Length != 13 || !etiqueta.StartsWith("21", StringComparison.Ordinal)
+                || !SoDigitos(etiqueta)
+                || CalcularDigitoEan13(etiqueta.Substring(0, 12)) != etiqueta[12] - '0')
+                return false;
+            int precoLegado = int.Parse(etiqueta.Substring(7, 5), CultureInfo.InvariantCulture);
+            if (precoLegado <= 0) return false;
+            refProduto = etiqueta.Substring(2, 5);
+            precoCentavos = precoLegado;
+            return true;
         }
 
-        /// <summary>Dígito verificador EAN-13 sobre os 12 primeiros dígitos (mesma regra do servidor).</summary>
         public static int CalcularDigitoEan13(string doze)
         {
             int soma = 0;
             for (int i = 0; i < 12; i++)
-            {
-                int d = doze[i] - '0';
-                soma += (i % 2 == 0) ? d : d * 3;
-            }
-            return (10 - (soma % 10)) % 10;
+                soma += (doze[i] - '0') * (i % 2 == 0 ? 1 : 3);
+            return (10 - soma % 10) % 10;
         }
 
-        private static bool SoDigitos(string s)
+        private static bool SoDigitos(string texto)
         {
-            foreach (var ch in s) if (ch < '0' || ch > '9') return false;
+            foreach (char c in texto) if (c < '0' || c > '9') return false;
             return true;
         }
     }

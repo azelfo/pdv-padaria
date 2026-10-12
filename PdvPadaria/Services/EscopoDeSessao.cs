@@ -50,6 +50,7 @@ namespace PdvPadaria.Services
             if (Encerrado)
                 throw new ObjectDisposedException(nameof(EscopoDeSessao),
                     "Esta sessão já foi encerrada. A operação pertence à sessão anterior.");
+            Sessao.GarantirAtiva();
         }
 
         /// <summary>
@@ -86,8 +87,7 @@ namespace PdvPadaria.Services
                 }
                 else
                 {
-                    // O envio que estourou o tempo segue correndo sozinho; observar o
-                    // resultado evita que uma falha dele derrube o processo depois.
+                    // Dispose cancela a rede; observar a conclusao evita excecao sem observador.
                     _ = envio.ContinueWith(t => { _ = t.Exception; },
                         System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted);
                 }
@@ -107,6 +107,7 @@ namespace PdvPadaria.Services
         {
             if (Encerrado) return;
             Encerrado = true;
+            Sessao.Encerrar();
 
             // Descarta o que a sessão deixou em memória. A identidade da MÁQUINA (token,
             // loja conhecida, veredito do token) sobrevive de propósito: ela não é da

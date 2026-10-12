@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>PdvPaymentChecks</RootNamespace>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\MoneyInput.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\WeightBarcodeService.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\BarcodeService.cs" />
+    <Compile Include="..\..\PdvPadaria\Views\PaymentWindow.xaml.cs" />
+    <Page Include="..\..\PdvPadaria\Views\PaymentWindow.xaml" Link="Views\PaymentWindow.xaml" />
+    <Resource Include="..\..\PdvPadaria\Resources\app.ico" Link="Resources\app.ico" />
+    <PackageReference Include="ZXing.Net" Version="0.16.9" />
+  </ItemGroup>
+</Project>

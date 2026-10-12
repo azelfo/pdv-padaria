@@ -21,7 +21,7 @@
 [Setup]
 AppId={{C6F2A3F4-5987-45CC-AB1B-7AA8D4D4A994}
 AppName=PDV - Padaria Venâncio
-AppVersion=1.1.16
+AppVersion=1.1.17
 AppPublisher=Padaria Venâncio
 AppPublisherURL=https://www.padariavenancio.com.br
 DefaultDirName={autopf}\PDV Padaria Venancio
@@ -49,8 +49,8 @@ Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\PdvPadaria.exe"; DestDir: "
 ;
 ; ATENÇÃO — o .env é EXCLUÍDO daqui de propósito. Dois motivos, os dois graves:
 ;
-;   1) SEGREDO: ele guarda STORE_SYNC_TOKEN (credencial de escrita da sincronização),
-;      INFINITE_CLIENT_SECRET e a chave PIX. Este instalador é publicado num repositório
+;   1) SEGREDO: ele pode guardar STORE_SYNC_TOKEN (credencial de escrita da sincronização).
+;      Este instalador é publicado num repositório
 ;      PÚBLICO no GitHub, então qualquer um que baixasse o .exe teria esses valores.
 ;   2) IDENTIDADE: STORE_ID e STORE_SYNC_TOKEN dizem QUAL loja é aquele caixa. Copiar o
 ;      .env de quem gerou o instalador faria toda loja atualizada virar a mesma loja —

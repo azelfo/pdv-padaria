@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\PdvPadaria\Services\SyncService.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\StoreIdentityService.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\EnvService.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\Sessao.cs" />
+    <Compile Include="..\..\PdvPadaria\Services\EscopoDeSessao.cs" />
+    <Compile Include="..\..\PdvPadaria\Models\*.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
+    <PackageReference Include="SQLitePCLRaw.bundle_green" Version="2.1.11" />
+  </ItemGroup>
+</Project>
