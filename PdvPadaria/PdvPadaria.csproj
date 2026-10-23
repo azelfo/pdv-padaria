@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <StartupObject>PdvPadaria.Program</StartupObject>
     <!-- .NET Framework 4.8 (e não .NET 8) porque as lojas usam máquinas antigas com
          Windows 7 SP1 / 8.1, onde o .NET 8 não roda (a Microsoft não suporta). O 4.8
          é instalável no Win7 SP1 e Win8.1, e já vem embutido no Windows 10/11.
@@ -20,9 +21,9 @@
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <!-- Fonte da verdade da versão do app (lida em runtime pelo UpdateService).
          Bump aqui + em PdvPadaria\setup.iss (AppVersion) a cada release. -->
-    <Version>1.1.17</Version>
-    <AssemblyVersion>1.1.17.0</AssemblyVersion>
-    <FileVersion>1.1.17.0</FileVersion>
+    <Version>1.1.18</Version>
+    <AssemblyVersion>1.1.18.0</AssemblyVersion>
+    <FileVersion>1.1.18.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

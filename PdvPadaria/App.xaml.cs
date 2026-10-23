@@ -32,16 +32,12 @@ namespace PdvPadaria
             // (um erro numa tela não derruba o caixa inteiro).
             DispatcherUnhandledException += (s, ev) =>
             {
+                var log = StartupDiagnostics.Registrar("Erro na interface", ev.Exception);
                 try
                 {
-                    string dir = System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "pdv-padaria");
-                    System.IO.Directory.CreateDirectory(dir);
-                    string log = System.IO.Path.Combine(dir, "erro.log");
-                    System.IO.File.AppendAllText(log,
-                        $"=== {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===\n{ev.Exception}\n\n");
                     MessageBox.Show(
-                        $"Ocorreu um erro nesta tela:\n\n{ev.Exception.Message}\n\nO erro foi registrado. O sistema continua funcionando.",
+                        $"Ocorreu um erro nesta tela:\n\n{ev.Exception.Message}\n\n" +
+                        (log == null ? "Não foi possível gravar o diagnóstico." : "Diagnóstico salvo em:\n" + log),
                         "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
                 catch { }
@@ -51,6 +47,7 @@ namespace PdvPadaria
             try
             {
                 // 1. Inicializa o serviço de banco SQLite local
+                StartupDiagnostics.Registrar("Inicializando banco local");
                 Database = new DatabaseService();
                 await Database.InitializeAsync();
 
@@ -59,18 +56,15 @@ namespace PdvPadaria
                 // podia chegar depois do registro novo e sobrescrever a loja correta.
 
                 // 2. Abre a tela de Login
+                StartupDiagnostics.Registrar("Abrindo tela de login");
                 var loginWindow = new Views.LoginWindow();
                 loginWindow.Show();
+                StartupDiagnostics.Registrar("Tela de login aberta");
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    $"Erro fatal durante a inicialização do aplicativo:\n\n{ex.Message}\n\nO aplicativo será encerrado.",
-                    "Erro de Inicialização",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error
-                );
-                Shutdown();
+                StartupDiagnostics.MostrarErroFatal("Inicialização do banco ou login", ex);
+                Shutdown(1);
             }
         }
     }

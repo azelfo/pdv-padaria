@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "verifiedOn": "2026-10-23",
+  "files": [
+    {
+      "file": "Windows6.1-KB4490628-x86.msu",
+      "url": "https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/secu/2019/03/windows6.1-kb4490628-x86_3cdb3df55b9cd7ef7fcb24fc4e237ea287ad0992.msu",
+      "bytes": 4217422,
+      "sha256": "b86849fda570f906012992a033f6342373c00a3b3ec0089780eabb084a9a0182",
+      "architecture": "x86",
+      "cab": "Windows6.1-KB4490628-x86.cab",
+      "packageIdentity": "Package_for_KB4490628~31bf3856ad364e35~x86~~6.1.1.2",
+      "source": "https://support.microsoft.com/help/4490628"
+    },
+    {
+      "file": "Windows6.1-KB4490628-x64.msu",
+      "url": "https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/secu/2019/03/windows6.1-kb4490628-x64_d3de52d6987f7c8bdc2c015dca69eac96047c76e.msu",
+      "bytes": 9543846,
+      "sha256": "8075f6d889bcb27be6f52ed47081675e5bb8a5390f2f5bfe4ec27a2bb70cbf5e",
+      "architecture": "x64",
+      "cab": "Windows6.1-KB4490628-x64.cab",
+      "packageIdentity": "Package_for_KB4490628~31bf3856ad364e35~amd64~~6.1.1.2",
+      "source": "https://support.microsoft.com/help/4490628"
+    },
+    {
+      "file": "Windows6.1-KB4474419-v3-x86.msu",
+      "url": "https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/secu/2019/09/windows6.1-kb4474419-v3-x86_0f687d50402790f340087c576886501b3223bec6.msu",
+      "bytes": 35919018,
+      "sha256": "8cf49fc7ac61e0b217859313a96337b149ab41b3307eb0d9529615142ea34c6c",
+      "architecture": "x86",
+      "cab": "Windows6.1-KB4474419-v3-x86.cab",
+      "packageIdentity": "Package_for_KB4474419~31bf3856ad364e35~x86~~6.1.3.2",
+      "source": "https://support.microsoft.com/help/4474419"
+    },
+    {
+      "file": "Windows6.1-KB4474419-v3-x64.msu",
+      "url": "https://catalog.s.download.windowsupdate.com/c/msdownload/update/software/secu/2019/09/windows6.1-kb4474419-v3-x64_b5614c6cea5cb4e198717789633dca16308ef79c.msu",
+      "bytes": 55853327,
+      "sha256": "99312df792b376f02e25607d2eb3355725c47d124d8da253193195515fe90213",
+      "architecture": "x64",
+      "cab": "Windows6.1-KB4474419-v3-x64.cab",
+      "packageIdentity": "Package_for_KB4474419~31bf3856ad364e35~amd64~~6.1.3.2",
+      "source": "https://support.microsoft.com/help/4474419"
+    },
+    {
+      "file": "Windows6.1-KB4019990-x86.msu",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/2bcc88d0-d1fb-44d7-a401-97ce03ea269d/50431c5ef436e54abaffd33aaebc539b/windows6.1-kb4019990-x86.msu",
+      "bytes": 1424481,
+      "sha256": "62101125e4619575a55a4ff63d049debd33e04b485b6616058862c525050e210",
+      "architecture": "x86",
+      "cab": "Windows6.1-KB4019990-x86.cab",
+      "packageIdentity": "Package_for_KB4019990~31bf3856ad364e35~x86~~6.1.1.2",
+      "source": "https://support.microsoft.com/help/4019990"
+    },
+    {
+      "file": "Windows6.1-KB4019990-x64.msu",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/2bcc88d0-d1fb-44d7-a401-97ce03ea269d/3e2c445075c63a203950a916a2bd7c63/windows6.1-kb4019990-x64.msu",
+      "bytes": 2873529,
+      "sha256": "4ee562192cf21716f3c38cac3c2b17ef73b76708001d8a075d31df0996f0c6b3",
+      "architecture": "x64",
+      "cab": "Windows6.1-KB4019990-x64.cab",
+      "packageIdentity": "Package_for_KB4019990~31bf3856ad364e35~amd64~~6.1.1.2",
+      "source": "https://support.microsoft.com/help/4019990"
+    },
+    {
+      "file": "NDP48-x86-x64-AllOS-ENU.exe",
+      "url": "https://download.microsoft.com/download/f/3/a/f3a6af84-da23-40a5-8d1c-49cc10c8e76f/NDP48-x86-x64-AllOS-ENU.exe",
+      "bytes": 121346568,
+      "sha256": "0a3a390c47e639d0f7fc65b21195fee6b7f65b066f80f70c60fab191d14b7e40",
+      "architecture": "x86+x64",
+      "source": "https://support.microsoft.com/en-us/servicing/dotnetframework/2019/10/microsoft-net-framework-4-8-offline-installer-for-windows"
+    }
+  ]
+}

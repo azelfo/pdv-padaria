@@ -1,0 +1,15 @@
+{
+  "version": "1.1.18",
+  "installers": [
+    {
+      "file": "Setup_PadariaVenancio.exe",
+      "bytes": 7129465,
+      "sha256": "c9abf27adb1c36b345da72000a0c72216ff61d1aa4035f3fc8fcb83cc6aa8162"
+    },
+    {
+      "file": "Setup_PadariaVenancio_Completo.exe",
+      "bytes": 233257613,
+      "sha256": "9d62372f6bbc9ca328e8a7c07b00d6b2737efd620b43e986dba4ab9a9d010902"
+    }
+  ]
+}

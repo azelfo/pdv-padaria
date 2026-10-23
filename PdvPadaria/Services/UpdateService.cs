@@ -28,7 +28,7 @@ namespace PdvPadaria.Services
 
     // Verifica e aplica atualizações do PDV a partir de um arquivo version.json hospedado
     // no GitHub Pages do projeto. Fluxo: baixa o installer novo -> fecha o app -> instalador
-    // roda silencioso -> reabre o app sozinho (ver [Run]/[Code] em PdvPadaria/setup.iss).
+    // mostra o progresso da instalação -> reabre o app sozinho (ver [Run]/[Code] em PdvPadaria/setup.iss).
     //
     // IMPORTANTE (bootstrap): só funciona a partir da versão que introduziu este serviço
     // (1.0.8). Máquinas com versão anterior precisam de UMA última instalação manual;
@@ -45,6 +45,12 @@ namespace PdvPadaria.Services
         private static readonly HttpClient _http = new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        // O pacote pode incluir componentes do Windows e levar bem mais tempo que o JSON.
+        private static readonly HttpClient _downloadHttp = new HttpClient
+        {
+            Timeout = TimeSpan.FromMinutes(10)
         };
 
         // Consulta o version.json remoto. Retorna null se não houver atualização, se a
@@ -104,9 +110,9 @@ namespace PdvPadaria.Services
             };
         }
 
-        // Baixa o instalador e o executa de forma silenciosa; em seguida encerra ESTE processo
+        // Baixa o instalador e mostra seu progresso e erros; em seguida encerra ESTE processo
         // (libera os arquivos para o instalador sobrescrever) e o instalador reabre o PDV sozinho
-        // ao final (ver [Run] com Check: ShouldRelaunchSilently em setup.iss).
+        // ao final (ver [Run] com Check: DeveReabrirSilenciosamente em setup.iss).
         public static async Task<bool> DownloadAndInstallAsync(UpdateInfo info)
         {
             try
@@ -124,7 +130,7 @@ namespace PdvPadaria.Services
                 var tempPath = Path.Combine(Path.GetTempPath(),
                     "PdvUpdate_" + Path.GetRandomFileName() + ".exe");
 
-                using (var response = await _http.GetAsync(info.Url))
+                using (var response = await _downloadHttp.GetAsync(info.Url))
                 {
                     response.EnsureSuccessStatusCode();
                     var bytes = await response.Content.ReadAsByteArrayAsync();
@@ -156,7 +162,7 @@ namespace PdvPadaria.Services
                 var psi = new ProcessStartInfo
                 {
                     FileName = tempPath,
-                    Arguments = "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES",
+                    Arguments = "/SILENT /NORESTART",
                     UseShellExecute = true
                 };
                 Process.Start(psi);

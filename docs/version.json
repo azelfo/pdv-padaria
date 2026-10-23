@@ -1,6 +1,8 @@
 {
-  "version": "1.1.17",
+  "notes": "Prepara os componentes necessarios no Windows 7 SP1, incluindo reparacao da dependencia grafica. Instalador completo com .NET Framework 4.8 e atualizacoes Microsoft locais, controle de reinicios e retomada. Melhora o diagnostico de abertura e o prazo para baixar atualizacoes. PIX permanece manual; historico e configuracao da loja sao preservados.",
+  "version": "1.1.18",
   "url": "https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe",
-  "sha256": "965930993f27a42b6821720dc012df005f8263301482bf327cdf41e015696ce1",
-  "notes": "PIX continua manual: confira o recebimento no banco ou na maquininha e confirme no caixa. Corrige encerramento de sessao, sincronizacao, reposicao e ajustes de estoque, valores em dinheiro e painel da rede. Novas etiquetas preservam o peso original: atualize todos os caixas que leem essas etiquetas e reemita etiquetas antigas de peso. O instalador preserva o historico local e a configuracao de cada loja."
+  "sha256": "c9abf27adb1c36b345da72000a0c72216ff61d1aa4035f3fc8fcb83cc6aa8162",
+  "fullUrl": "https://github.com/azelfo/pdv-padaria/releases/download/v1.1.18/Setup_PadariaVenancio_Completo.exe",
+  "fullSha256": "9d62372f6bbc9ca328e8a7c07b00d6b2737efd620b43e986dba4ab9a9d010902"
 }

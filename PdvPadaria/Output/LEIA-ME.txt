@@ -1,0 +1,11 @@
+PDV Padaria Venancio - versao 1.1.18
+
+Setup_PadariaVenancio.exe - 7129465 bytes: atualizacao menor; pode baixar componentes ausentes.
+Setup_PadariaVenancio_Completo.exe - 233257613 bytes: pacote completo, recomendado para Windows 7 SP1 com falha ao abrir o PDV.
+
+Execute como administrador. Aceite os reinicios solicitados; a instalacao continua no proximo login de administrador ou ao abrir o instalador novamente.
+O pacote inclui apenas os componentes Microsoft necessarios ao PDV; nao instala todas as atualizacoes do Windows e nao instala o Service Pack 1.
+Em caso de erro, guarde o log Setup Log na pasta %TEMP%. Consulte tambem C:\Windows\Logs\DISM\dism.log e os logs dd_NDP48 em %TEMP% quando indicados.
+
+Publicacao: envie primeiro o pacote completo para a Release v1.1.18 no GitHub e confirme o download. Depois publique o instalador menor e docs/version.json no branch main.
+Este script prepara arquivos locais; nao publica automaticamente. Os hashes e tamanhos estao em instaladores.json.

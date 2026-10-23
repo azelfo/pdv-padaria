@@ -1,19 +1,10 @@
-; Script de Instalação do Inno Setup para o PDV Padaria Venâncio
-; Aplicação WPF em .NET Framework 4.8 (roda em Windows 7 SP1, 8.1, 10 e 11)
-;
-; Este mesmo arquivo gera DOIS instaladores:
-;   ISCC setup.iss            -> Setup_PadariaVenancio.exe (pequeno, ~4 MB)
-;                                Baixa o .NET Framework 4.8 se faltar. Usado pelo
-;                                auto-update, onde a máquina já tem o componente.
-;   ISCC /DOFFLINE setup.iss  -> Setup_PadariaVenancio_Completo.exe (~120 MB)
-;                                Traz o .NET Framework 4.8 embutido. Necessário no
-;                                Windows 7/8.1, onde o download falha: o WinHTTP
-;                                dessas versões ainda usa TLS 1.0 e o site da
-;                                Microsoft exige TLS 1.2.
-
+; Gere os dois pacotes com .\gerar-instaladores.ps1 (valida os redistribuíveis Microsoft).
+#define AppVersao "1.1.18"
+#ifndef PublishDir
+  #define PublishDir "bin\Release\net48\publish"
+#endif
 #ifdef OFFLINE
   #define NomeSaida "Setup_PadariaVenancio_Completo"
-  #define ArquivoNetFx "NDP48-x86-x64-AllOS-ENU.exe"
 #else
   #define NomeSaida "Setup_PadariaVenancio"
 #endif
@@ -21,202 +12,268 @@
 [Setup]
 AppId={{C6F2A3F4-5987-45CC-AB1B-7AA8D4D4A994}
 AppName=PDV - Padaria Venâncio
-AppVersion=1.1.17
+AppVersion={#AppVersao}
 AppPublisher=Padaria Venâncio
 AppPublisherURL=https://www.padariavenancio.com.br
 DefaultDirName={autopf}\PDV Padaria Venancio
 DefaultGroupName=PDV Padaria Venancio
 DisableProgramGroupPage=yes
-; Localização do arquivo de ícone de alta resolução para o próprio instalador (.exe)
-SetupIconFile=d:\PDV\PdvPadaria\Resources\app.ico
+SetupIconFile=Resources\app.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 OutputBaseFilename={#NomeSaida}
-; Permite instalação administrativa ou por usuário comum
 PrivilegesRequired=admin
-; Auto-update (UpdateService.cs): fecha o PDV se estiver aberto ao sobrescrever os arquivos
-; (defesa extra — o próprio app já se fecha sozinho antes de iniciar o instalador silencioso).
 CloseApplications=yes
 RestartApplications=no
+SetupLogging=yes
 
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Files]
-; Executável Principal
-Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\PdvPadaria.exe"; DestDir: "{app}"; Flags: ignoreversion
-;
-; ATENÇÃO — o .env é EXCLUÍDO daqui de propósito. Dois motivos, os dois graves:
-;
-;   1) SEGREDO: ele pode guardar STORE_SYNC_TOKEN (credencial de escrita da sincronização).
-;      Este instalador é publicado num repositório
-;      PÚBLICO no GitHub, então qualquer um que baixasse o .exe teria esses valores.
-;   2) IDENTIDADE: STORE_ID e STORE_SYNC_TOKEN dizem QUAL loja é aquele caixa. Copiar o
-;      .env de quem gerou o instalador faria toda loja atualizada virar a mesma loja —
-;      as vendas de todas cairiam num único STORE_ID e a conferência de estoque pararia
-;      de fechar.
-;
-; O que vai no pacote é o .env.exemplo, sem valores, criado só se ainda não houver .env.
-Source: "d:\PDV\PdvPadaria\bin\Release\net48\publish\*"; DestDir: "{app}"; Excludes: ".env"; Flags: ignoreversion recursesubdirs createallsubdirs
-; Modelo em branco. "onlyifdoesntexist" garante que a atualização NUNCA sobrescreve a
-; configuração da loja; numa instalação nova ele vira o .env a ser preenchido.
-Source: "d:\PDV\PdvPadaria\.env.exemplo"; DestDir: "{app}"; DestName: ".env"; Flags: onlyifdoesntexist uninsneveruninstall
-Source: "d:\PDV\PdvPadaria\.env.exemplo"; DestDir: "{app}"; Flags: ignoreversion
-; Nota: Ajuste os caminhos acima se utilizar a publicação com RID específico (ex: \publish\win-x64\)
+; Os pré-requisitos ficam antes do aplicativo para extração durante PrepareToInstall.
 #ifdef OFFLINE
-; .NET Framework 4.8 embutido (só na versão Completo). "dontcopy" = fica dentro do
-; instalador e só é extraído para a pasta temporária quando realmente faltar.
-Source: "d:\PDV\PdvPadaria\redist\{#ArquivoNetFx}"; Flags: dontcopy noencryption
+Source: "redist\Windows6.1-KB4490628-x86.msu"; Flags: dontcopy noencryption
+Source: "redist\Windows6.1-KB4490628-x64.msu"; Flags: dontcopy noencryption
+Source: "redist\Windows6.1-KB4474419-v3-x86.msu"; Flags: dontcopy noencryption
+Source: "redist\Windows6.1-KB4474419-v3-x64.msu"; Flags: dontcopy noencryption
+Source: "redist\Windows6.1-KB4019990-x86.msu"; Flags: dontcopy noencryption
+Source: "redist\Windows6.1-KB4019990-x64.msu"; Flags: dontcopy noencryption
+Source: "redist\NDP48-x86-x64-AllOS-ENU.exe"; Flags: dontcopy noencryption
+#else
+; A reparação gráfica também funciona offline no pacote menor de atualização.
+Source: "redist\Windows6.1-KB4019990-x86.msu"; Flags: dontcopy noencryption
+Source: "redist\Windows6.1-KB4019990-x64.msu"; Flags: dontcopy noencryption
 #endif
+; Nunca distribuir configuração ou credencial da máquina que gerou o pacote.
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: ".env,*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: ".env.exemplo"; DestDir: "{app}"; DestName: ".env"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: ".env.exemplo"; DestDir: "{app}"; Flags: ignoreversion
 
 [InstallDelete]
-; Restos da versão anterior, que rodava em .NET 8 e usava outro layout de arquivos.
-; Sem isto, a pasta ficaria com arquivos órfãos após a migração para .NET Framework 4.8.
+; Somente restos do antigo executável .NET 8; o banco e a configuração são preservados.
 Type: filesandordirs; Name: "{app}\runtimes"
 Type: files; Name: "{app}\PdvPadaria.runtimeconfig.json"
 Type: files; Name: "{app}\PdvPadaria.deps.json"
 
 [Icons]
-; Atalho no Menu Iniciar (Criado Obrigatoriamente)
 Name: "{group}\PDV - Padaria Venâncio"; Filename: "{app}\PdvPadaria.exe"
-; Atalho na Área de Trabalho (Criado Obrigatoriamente)
 Name: "{autodesktop}\PDV - Padaria Venâncio"; Filename: "{app}\PdvPadaria.exe"
 
 [Run]
-; Opção para iniciar o PDV automaticamente após a conclusão da instalação (instalação manual,
-; com wizard visível — o operador vê a caixa de seleção na tela final).
-Filename: "{app}\PdvPadaria.exe"; Description: "{cm:LaunchProgram,PDV - Padaria Venâncio}"; Flags: nowait postinstall skipifsilent
-; Auto-update silencioso (UpdateService.cs chama Setup com /VERYSILENT): sem wizard, então a
-; entrada acima nunca roda (skipifsilent). Esta reabre o PDV sozinho ao final da atualização.
-Filename: "{app}\PdvPadaria.exe"; Flags: nowait runasoriginaluser; Check: ShouldRelaunchSilently
+Filename: "{app}\PdvPadaria.exe"; Description: "{cm:LaunchProgram,PDV - Padaria Venâncio}"; Flags: nowait postinstall skipifsilent; Check: PodeAbrirPdv
+; O atualizador usa /SILENT /NORESTART para deixar erros e reinícios visíveis.
+Filename: "{app}\PdvPadaria.exe"; Flags: nowait runasoriginaluser; Check: DeveReabrirSilenciosamente
 
 [Code]
+#include "instalador-politica.iss"
+#include "redist\prerequisitos.iss"
+
 const
-  // Instalador offline oficial do .NET Framework 4.8 (roda em Windows 7 SP1, 8.1, 10 e 11).
-  URL_NETFX48 = 'https://go.microsoft.com/fwlink/?linkid=2088631';
-  // Chave onde o Windows registra a versão instalada do .NET Framework 4.x.
-  // Release >= 528040 significa 4.8 ou superior (valor documentado pela Microsoft).
   REG_NETFX = 'SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full';
-  RELEASE_MINIMO_48 = 528040;
+  REG_CBS = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing';
+  REG_REINICIO = 'SOFTWARE\PadariaVenancio\Instalacao\AguardandoReinicio';
+  REG_RUNONCE = 'SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce';
+  NOME_RETOMADA = 'PDVPadariaSetup{#AppVersao}';
 
-function ShouldRelaunchSilently(): Boolean;
+var
+  Pronto: Boolean;
+
+#include "instalador-nativo.iss"
+
+function RaizNativa: Integer;
 begin
-  Result := WizardSilent();
+  if IsWin64 then Result := HKLM64 else Result := HKLM32;
 end;
 
-// Lê no registro a versão do .NET Framework 4.x instalada. A Microsoft documenta
-// que o valor "Release" >= 528040 significa 4.8 ou superior.
-function NetFramework48Instalado(): Boolean;
-var
-  Release: Cardinal;
+function Windows7: Boolean;
+var V: TWindowsVersion;
 begin
-  Result := False;
-  if RegQueryDWordValue(HKEY_LOCAL_MACHINE, REG_NETFX, 'Release', Release) then
-    Result := Release >= RELEASE_MINIMO_48;
+  GetWindowsVersionEx(V);
+  Result := (V.Major = 6) and (V.Minor = 1);
 end;
 
-// O .NET Framework 4.8 roda em Windows 7 SP1, 8.1, 10 e 11 — mas NÃO no Windows 7
-// sem Service Pack 1, nem no Windows 8.0 "puro" (que precisa do update grátis 8.1),
-// nem em versões anteriores. Barra com mensagem clara em vez de instalar um app
-// que não vai abrir.
-function InitializeSetup(): Boolean;
-var
-  Versao: TWindowsVersion;
+function SistemaNativo: String;
 begin
-  Result := True;
-  GetWindowsVersionEx(Versao);
-
-  // Windows 7 = 6.1 (exige SP1) | Windows 8.0 = 6.2 | Windows 8.1 = 6.3 | Win10/11 = 10.0
-  if (Versao.Major < 6) or ((Versao.Major = 6) and (Versao.Minor < 1)) then
-  begin
-    MsgBox('Este computador usa uma versão do Windows muito antiga (anterior ao Windows 7).' + #13#10#13#10 +
-           'O PDV precisa de Windows 7 com Service Pack 1, Windows 8.1, Windows 10 ou Windows 11.',
-           mbCriticalError, MB_OK);
-    Result := False;
-    Exit;
-  end;
-
-  // Windows 7 sem SP1 não recebe o .NET Framework 4.8.
-  if (Versao.Major = 6) and (Versao.Minor = 1) and (Versao.ServicePackMajor < 1) then
-  begin
-    MsgBox('Este Windows 7 está sem o Service Pack 1.' + #13#10#13#10 +
-           'Instale o Service Pack 1 pelo Windows Update e rode este instalador de novo.',
-           mbCriticalError, MB_OK);
-    Result := False;
-    Exit;
-  end;
-
-  // Windows 8.0 não recebe o .NET Framework 4.8; o update para 8.1 é gratuito.
-  if (Versao.Major = 6) and (Versao.Minor = 2) then
-  begin
-    MsgBox('Este computador usa o Windows 8, que a Microsoft não atualiza mais.' + #13#10#13#10 +
-           'Atualize gratuitamente para o Windows 8.1 (pela Loja do Windows ou Windows Update) ' +
-           'e rode este instalador de novo.',
-           mbCriticalError, MB_OK);
-    Result := False;
-    Exit;
-  end;
+  if IsWin64 then Result := ExpandConstant('{sysnative}')
+  else Result := ExpandConstant('{sys}');
 end;
 
-// Antes de copiar os arquivos: garante que o .NET Framework 4.8 existe.
-// No Windows 10/11 ele já vem de fábrica, então isto só age em máquinas antigas
-// (Windows 7 SP1 / 8.1), baixando e instalando em silêncio. Retornar texto aqui
-// aborta a instalação mostrando esse texto ao usuário.
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  CodigoSaida: Integer;
-  Instalador: String;
+function NetFramework48Instalado: Boolean;
+var Release: Cardinal;
+begin
+  Result := RegQueryDWordValue(HKLM32, REG_NETFX, 'Release', Release);
+  if Result then Result := Release >= 528040;
+end;
+
+
+function PodeAbrirPdv: Boolean;
+begin
+  Result := Pronto and not RegKeyExists(HKLM32, REG_REINICIO);
+end;
+
+function DeveReabrirSilenciosamente: Boolean;
+begin
+  // Na retomada pode estar conectado outro administrador, diferente do operador do caixa.
+  Result := WizardSilent and PodeAbrirPdv and
+    (ExpandConstant('{param:RETOMAR|0}') <> '1');
+end;
+
+function InitializeSetup: Boolean;
+var V: TWindowsVersion;
+begin
+  GetWindowsVersionEx(V);
+  Result := not ((V.Major < 6) or ((V.Major = 6) and
+    ((V.Minor < 1) or ((V.Minor = 1) and (V.ServicePackMajor < 1)) or (V.Minor = 2))));
+  if not Result then
+    MsgBox('O PDV precisa de Windows 7 com Service Pack 1, Windows 8.1, 10 ou 11.' + #13#10 +
+      'Este pacote não instala Service Pack 1 nem troca a versão do Windows.', mbCriticalError, MB_OK);
+end;
+
+function AgendarRetomada(var NeedsRestart: Boolean): String;
+var Pasta, Destino, Comando: String; Chave: THandle; Disposicao: Cardinal;
+begin
+  Pronto := False;
+  NeedsRestart := True;
+  Result := 'Reinicie o computador para concluir os componentes da Microsoft.' + #13#10 +
+    'Depois do reinício, abra este instalador novamente.';
+  // Registrar a barreira antes do cache: falta de espaço não pode permitir pular o boot.
+  if CriarChaveVolatil(HKLM, REG_REINICIO, 0, '', 1, $20206, 0, Chave, Disposicao) <> 0 then begin
+    Result := Result + #13#10 + 'Não foi possível registrar a retomada automática.';
+    Exit;
+  end;
+  FecharChave(Chave);
+  // Cache em Common Files: um usuário comum não pode trocar o executável da retomada elevada.
+  Pasta := ExpandConstant('{commoncf32}\PadariaVenancio\Instalacao\{#AppVersao}');
+  Destino := Pasta + '\{#NomeSaida}.exe';
+  if not ForceDirectories(Pasta) then Exit;
+  if CompareText(ExpandConstant('{srcexe}'), Destino) <> 0 then
+    if not CopyFile(ExpandConstant('{srcexe}'), Destino, False) then Exit;
+  if CompareText(GetSHA256OfFile(Destino), GetSHA256OfFile(ExpandConstant('{srcexe}'))) <> 0 then Exit;
+  Comando := AddQuotes(Destino) + ' /RETOMAR=1 /SILENT /NORESTART /DIR=' + AddQuotes(WizardDirValue);
+  if RegWriteStringValue(HKLM32, REG_RUNONCE, NOME_RETOMADA, Comando) then
+    Result := 'Reinicie o computador para concluir os componentes da Microsoft.' + #13#10 +
+      'A instalação continuará no próximo login de um administrador. Você também pode abrir este instalador novamente.';
+end;
+
+function EstadoDoPacote(const Identidade: String): Cardinal;
+begin
+  if not RegQueryDWordValue(RaizNativa, REG_CBS + '\Packages\' + Identidade, 'CurrentState', Result) then
+    Result := 0;
+end;
+
+function PrepararArquivo(const Nome: String; var Caminho, Cab, Identidade: String): String;
+var Url, Hash: String;
 begin
   Result := '';
-
-  if NetFramework48Instalado() then
+  if not DadosDoPacote(Nome, Url, Hash, Cab, Identidade) then begin
+    Result := 'Pré-requisito desconhecido: ' + Nome;
     Exit;
-
-  WizardForm.PreparingLabel.Caption :=
-    'Instalando o componente .NET Framework 4.8 da Microsoft. Isso leva alguns minutos ' +
-    'e acontece apenas nesta primeira vez.';
-
+  end;
+  Caminho := ExpandConstant('{tmp}\') + Nome;
+  try
 #ifdef OFFLINE
-  // Versão Completo: o componente vem dentro do instalador, não depende de internet.
-  try
-    ExtractTemporaryFile('{#ArquivoNetFx}');
-  except
-    Result := 'Não foi possível preparar o componente .NET Framework 4.8 que vem junto com este instalador.';
-    Exit;
-  end;
-  Instalador := ExpandConstant('{tmp}\{#ArquivoNetFx}');
+    ExtractTemporaryFile(Nome);
 #else
-  // Versão pequena: baixa da Microsoft. No Windows 7/8.1 isso costuma FALHAR porque o
-  // WinHTTP dessas versões usa TLS 1.0 e o site da Microsoft exige TLS 1.2 — por isso a
-  // mensagem abaixo aponta para o instalador Completo em vez de só pedir para tentar de novo.
-  try
-    DownloadTemporaryFile(URL_NETFX48, 'ndp48-instalador.exe', '', nil);
-  except
-    Result := 'Este computador ainda não tem o componente ".NET Framework 4.8" da Microsoft, ' +
-              'e não foi possível baixá-lo automaticamente.' + #13#10#13#10 +
-              'Isso é normal no Windows 7 e 8.1.' + #13#10#13#10 +
-              'Use o instalador "Setup_PadariaVenancio_Completo.exe", que já traz esse ' +
-              'componente embutido e não precisa de download.';
-    Exit;
-  end;
-  Instalador := ExpandConstant('{tmp}\ndp48-instalador.exe');
+    if Pos('KB4019990', Nome) > 0 then ExtractTemporaryFile(Nome)
+    else DownloadTemporaryFile(Url, Nome, Hash, nil);
 #endif
+    if CompareText(GetSHA256OfFile(Caminho), Hash) <> 0 then
+      Result := 'O arquivo ' + Nome + ' não passou na verificação de integridade. Baixe o instalador completo novamente.';
+  except
+    Log(GetExceptionMessage);
+    Result := 'Não foi possível preparar ' + Nome + '.' + #13#10 +
+      'Use Setup_PadariaVenancio_Completo.exe, que contém todos os componentes e funciona sem download durante a instalação.';
+  end;
+end;
 
-  if not Exec(Instalador, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, CodigoSaida) then
-  begin
-    Result := 'Não foi possível executar o instalador do .NET Framework 4.8 da Microsoft.';
+function InstalarAtualizacao(const KB: String; var NeedsRestart: Boolean; Reparar: Boolean): String;
+var Nome, Url, Hash, Cab, Identidade, Arquivo, Pasta: String;
+    Estado: Cardinal; Codigo, Decisao: Integer;
+begin
+  Result := '';
+  Nome := 'Windows6.1-' + KB;
+  if IsWin64 then Nome := Nome + '-x64.msu' else Nome := Nome + '-x86.msu';
+  if not DadosDoPacote(Nome, Url, Hash, Cab, Identidade) then begin
+    Result := 'Pacote ausente do manifesto: ' + Nome;
     Exit;
   end;
-
-  // 0 = sucesso; 3010 e 1641 = sucesso mas pede reinício; 1638 = já há versão igual/maior.
-  if (CodigoSaida = 3010) or (CodigoSaida = 1641) then
-    NeedsRestart := True
-  else if (CodigoSaida <> 0) and (CodigoSaida <> 1638) then
-  begin
-    Result := 'A instalação do .NET Framework 4.8 da Microsoft falhou (código ' +
-              IntToStr(CodigoSaida) + ').' + #13#10#13#10 +
-              'Instale manualmente o ".NET Framework 4.8" pelo site da Microsoft e rode este instalador de novo.';
+  Estado := EstadoDoPacote(Identidade);
+  if Estado = 96 then begin Result := AgendarRetomada(NeedsRestart); Exit; end;
+  if PacoteSatisfeito(Estado) and not Reparar then Exit;
+  WizardForm.PreparingLabel.Caption := 'Preparando o Windows 7: ' + KB + '. Aguarde a conclusão.';
+  Result := PrepararArquivo(Nome, Arquivo, Cab, Identidade);
+  if Result <> '' then Exit;
+  Pasta := ExpandConstant('{tmp}\') + KB;
+  if not ForceDirectories(Pasta) then begin Result := 'Não foi possível criar a pasta temporária de ' + KB; Exit; end;
+  if not Exec(SistemaNativo + '\expand.exe', AddQuotes(Arquivo) + ' -F:' + Cab + ' ' + AddQuotes(Pasta),
+    '', SW_HIDE, ewWaitUntilTerminated, Codigo) then begin Result := 'Não foi possível extrair ' + KB; Exit; end;
+  if (Codigo <> 0) or not FileExists(Pasta + '\' + Cab) then begin
+    Result := 'Falha ao extrair ' + KB + ' (código ' + IntToStr(Codigo) + ').'; Exit;
+  end;
+  // CAB local evita a busca online do Windows Update; o DISM mantém a validação de aplicabilidade.
+  if not Exec(SistemaNativo + '\dism.exe', '/Online /Add-Package /PackagePath:' + AddQuotes(Pasta + '\' + Cab) +
+    ' /Quiet /NoRestart', '', SW_HIDE, ewWaitUntilTerminated, Codigo) then begin
+    Result := 'Não foi possível executar a instalação de ' + KB; Exit;
+  end;
+  Estado := EstadoDoPacote(Identidade);
+  Log(KB + ': código=' + IntToStr(Codigo) + '; estado CBS=' + IntToStr(Estado));
+  Decisao := ResultadoDaAtualizacao(Codigo, Estado);
+  if Decisao = 0 then begin
+    Result := 'O Windows não concluiu ' + KB + ' (código ' + IntToStr(Codigo) + ').' + #13#10 +
+      'A instalação do PDV foi interrompida. Consulte o log do instalador e C:\Windows\Logs\DISM\dism.log.';
     Exit;
   end;
+  if (Decisao = 2) or (KB = 'KB4474419-v3') then
+    Result := AgendarRetomada(NeedsRestart);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Arquivo, Cab, Identidade: String; Codigo: Integer;
+begin
+  Pronto := False;
+  Result := '';
+  if RegKeyExists(HKLM32, REG_REINICIO) then begin Result := AgendarRetomada(NeedsRestart); Exit; end;
+  if Windows7 then begin
+    if not NetFramework48Instalado then begin
+      if RegKeyExists(RaizNativa, REG_CBS + '\RebootPending') then begin
+        Result := AgendarRetomada(NeedsRestart); Exit;
+      end;
+      Result := InstalarAtualizacao('KB4490628', NeedsRestart, False);
+      if Result <> '' then Exit;
+      Result := InstalarAtualizacao('KB4474419-v3', NeedsRestart, False);
+      if Result <> '' then Exit;
+    end;
+    if not ComponenteGraficoFunciona then begin
+      Result := InstalarAtualizacao('KB4019990', NeedsRestart, True);
+      if Result <> '' then Exit;
+      if not ComponenteGraficoFunciona then begin
+        Result := 'O componente gráfico D3DCompiler_47.dll continua sem carregar (código ' + IntToStr(ErroGrafico) + ').' + #13#10 +
+          'O Windows precisa de reparo; o PDV não será aberto com esse componente indisponível.';
+        Exit;
+      end;
+    end;
+  end;
+  if not NetFramework48Instalado then begin
+    WizardForm.PreparingLabel.Caption := 'Instalando .NET Framework 4.8 da Microsoft. Isso pode levar alguns minutos.';
+    Result := PrepararArquivo('NDP48-x86-x64-AllOS-ENU.exe', Arquivo, Cab, Identidade);
+    if Result <> '' then Exit;
+    if not Exec(Arquivo, '/q /norestart', '', SW_SHOW, ewWaitUntilTerminated, Codigo) then begin
+      Result := 'Não foi possível executar o instalador do .NET Framework 4.8.'; Exit;
+    end;
+    Log('.NET Framework: código=' + IntToStr(Codigo));
+    if (Codigo = 3010) or (Codigo = 1641) then begin Result := AgendarRetomada(NeedsRestart); Exit; end;
+    if ((Codigo <> 0) and (Codigo <> 1638)) or not NetFramework48Instalado then begin
+      Result := 'O .NET Framework 4.8 não foi instalado (código ' + IntToStr(Codigo) + ').' + #13#10 +
+        'A instalação do PDV foi interrompida. Consulte os logs dd_NDP48 na pasta temporária do Windows.';
+      Exit;
+    end;
+  end;
+  Pronto := True;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then RegDeleteValue(HKLM32, REG_RUNONCE, NOME_RETOMADA);
 end;

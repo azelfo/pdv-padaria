@@ -51,6 +51,24 @@ class Program
         Checa("bytes diferentes produzem outra impressao",
             digital != (string)hash.Invoke(null, new object[] { System.Text.Encoding.UTF8.GetBytes("abcd") })!);
 
+        var consultaHttp = (System.Net.Http.HttpClient)typeof(UpdateService).GetField("_http",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
+        var downloadHttp = (System.Net.Http.HttpClient)typeof(UpdateService).GetField("_downloadHttp",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
+        Checa("consulta de versao continua limitada a 10 segundos", consultaHttp.Timeout == TimeSpan.FromSeconds(10));
+        Checa("download de componentes pode levar ate 10 minutos", downloadHttp.Timeout == TimeSpan.FromMinutes(10));
+        Checa("download e consulta usam clientes separados", !ReferenceEquals(consultaHttp, downloadHttp));
+        foreach (string endereco in new[]
+        {
+            "https://example.invalid/instalador.exe",
+            "https://raw.githubusercontent.com/azelfo/pdv-padaria-falso/main/setup.exe",
+            "http://raw.githubusercontent.com/azelfo/pdv-padaria/main/setup.exe"
+        })
+        {
+            Checa("instalador fora da origem autorizada e recusado: " + endereco,
+                !await UpdateService.DownloadAndInstallAsync(new UpdateInfo { Url = endereco, Sha256 = digital }));
+        }
+
         Console.WriteLine("\n== P0-3: identidade offline e logout ==");
         File.WriteAllText(Path.Combine(pastaTeste, "loja-identidade.txt"), "loja-a");
         await StoreIdentityService.ResolverAsync(string.Empty);

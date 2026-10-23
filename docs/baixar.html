@@ -76,7 +76,7 @@
     color:var(--texto-suave);
   }
 
-  /* Bloco de aviso para Windows 7 / 8.1 */
+  /* Instalação com componentes incluídos */
   .aviso{
     margin-top:32px;
     padding:20px;
@@ -129,16 +129,6 @@
     text-decoration:none;
   }
   .botao-secundario:hover{background:var(--marrom);color:#fff}
-  .cuidado{
-    margin-top:10px;
-    padding:10px 12px;
-    background:#fff;
-    border-left:3px solid #D9534F;
-    border-radius:6px;
-    font-size:.82rem;
-    color:var(--texto);
-  }
-
   .requisitos{
     margin-top:28px;
     padding-top:24px;
@@ -164,76 +154,71 @@
     <h1>PDV — Padaria Venâncio</h1>
     <p class="subtitulo">Sistema de frente de caixa para Windows</p>
 
-    <a class="botao" href="https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe" download>
+    <a id="baixar-completo" class="botao" href="https://github.com/azelfo/pdv-padaria/releases/download/v1.1.18/Setup_PadariaVenancio_Completo.exe" download>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
         <polyline points="7 10 12 15 17 10"/>
         <line x1="12" y1="15" x2="12" y2="3"/>
       </svg>
-      Baixar instalador
+      Baixar instalador completo
     </a>
+    <p class="meta">Recomendado para a primeira instalação, especialmente no Windows 7 SP1.</p>
+    <a id="baixar-padrao" class="botao-secundario" href="https://raw.githubusercontent.com/azelfo/pdv-padaria/main/PdvPadaria/Output/Setup_PadariaVenancio.exe" download>Baixar instalador padrão</a>
+    <p class="meta">O padrão pode precisar de internet para baixar componentes que faltam. No Windows 7, prefira o completo.</p>
 
     <!-- A versão é lida do mesmo version.json que o PDV consulta para se atualizar.
          Se a consulta falhar, não anuncia um número desatualizado. -->
     <p class="meta"><span id="versao">Versão atual</span> &middot; Windows</p>
     <script>
       fetch("https://raw.githubusercontent.com/azelfo/pdv-padaria/main/docs/version.json", { cache: "no-store" })
-        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          if (!r.ok) throw new Error("Versão indisponível");
+          return r.json();
+        })
         .then(function (d) {
           if (d && d.version) document.getElementById("versao").textContent = "Versão " + d.version;
+          if (d && typeof d.fullUrl === "string" && d.fullUrl.indexOf("https://github.com/azelfo/pdv-padaria/releases/download/") === 0)
+            document.getElementById("baixar-completo").href = d.fullUrl;
+          if (d && typeof d.url === "string" && d.url.indexOf("https://raw.githubusercontent.com/azelfo/pdv-padaria/") === 0)
+            document.getElementById("baixar-padrao").href = d.url;
         })
         .catch(function () { /* mantém o valor de reserva */ });
     </script>
 
-    <!-- Windows 7 / 8.1 precisam instalar o .NET Framework antes. O instalador do PDV
-         não consegue baixá-lo sozinho nessas versões (elas usam TLS 1.0 e o site da
-         Microsoft exige TLS 1.2), mas pelo navegador o download funciona normalmente. -->
     <section class="aviso">
       <div class="aviso-titulo">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
-        Seu computador é Windows 7 ou 8.1?
+        Como instalar
       </div>
-      <p>Nessas versões é preciso preparar o computador <strong>antes</strong> de instalar o PDV.
-         Faça uma vez só, <strong>nesta ordem</strong>:</p>
+      <p>O instalador completo já inclui o <strong>.NET Framework 4.8</strong> e as atualizações necessárias
+         do <strong>Windows 7 SP1</strong>. Ele identifica se o Windows é de 32 ou 64 bits e instala
+         os componentes necessários automaticamente.</p>
 
       <div class="passo">
         <span class="passo-num">1</span>
         <div>
-          <strong>Atualização de segurança do Windows (KB4474419).</strong><br>
-          Sem ela o Windows 7 recusa os instaladores atuais da Microsoft, com a mensagem
-          <em>“certificado raiz que não é confiável”</em>.<br>
-          <a class="botao-secundario" href="http://download.windowsupdate.com/c/msdownload/update/software/secu/2019/09/windows6.1-kb4474419-v3-x64_b5614c6cea5cb4e198717789633dca16308ef79c.msu">Baixar (Windows 64 bits)</a>
-          <a class="botao-secundario" href="https://www.catalog.update.microsoft.com/search.aspx?q=4474419">Windows 32 bits</a>
-          <div class="cuidado">
-            Para saber se o seu é 32 ou 64 bits: <strong>Painel de Controle → Sistema</strong>,
-            e veja em <em>“Tipo de sistema”</em>. Depois de instalar, <strong>reinicie o computador</strong>.
-          </div>
+          <strong>Baixe e abra o instalador completo.</strong><br>
+          Autorize a instalação com uma conta de administrador do computador.
         </div>
       </div>
 
       <div class="passo">
         <span class="passo-num">2</span>
         <div>
-          <strong>Instale o .NET Framework 4.8</strong> (componente da Microsoft, cerca de 115 MB).<br>
-          <a class="botao-secundario" href="https://go.microsoft.com/fwlink/?linkid=2088631">Baixar do site da Microsoft</a>
-          <div class="cuidado">
-            <strong>Atenção:</strong> use apenas este botão. Não baixe o arquivo chamado
-            <em>“Language Pack”</em> ou <em>“Português do Brasil”</em> — esse serve só para traduzir
-            as mensagens e não instala o componente.
-          </div>
+          <strong>Aguarde a verificação dos componentes.</strong><br>
+          A preparação pode levar alguns minutos. O instalador mostra o andamento e avisa se for necessário reiniciar.
         </div>
       </div>
 
       <div class="passo">
         <span class="passo-num">3</span>
-        <div>Reinicie o computador, se o instalador da Microsoft pedir.</div>
-      </div>
-
-      <div class="passo">
-        <span class="passo-num">4</span>
-        <div>Aí sim, baixe e instale o PDV no botão amarelo acima.</div>
+        <div>
+          <strong>Se precisar reiniciar, salve seu trabalho.</strong><br>
+          Depois, entre novamente no Windows com uma conta de administrador para continuar a instalação.
+          Se ela não reabrir, execute o mesmo instalador completo outra vez.
+        </div>
       </div>
     </section>
 
@@ -241,12 +226,13 @@
       <strong>Antes de instalar</strong>
       <ul>
         <li>Windows 7 SP1, 8.1, 10 ou 11</li>
-        <li>Windows 8 “puro” não funciona — atualize gratuitamente para o 8.1</li>
-        <li>Peça ao Windows para executar como administrador</li>
-        <li>Se aparecer aviso do Windows Defender, clique em “Mais informações” e depois “Executar assim mesmo”</li>
+        <li>Windows 7 sem SP1 e Windows 8.0 não são compatíveis</li>
+        <li>Permissão de administrador para instalar os componentes</li>
+        <li>Internet para o primeiro acesso à loja e para sincronizar</li>
       </ul>
     </div>
 
+    <p class="meta">PIX, dinheiro e cartão continuam como registros manuais de pagamento. O PDV não se conecta à conta bancária ou à maquininha.</p>
     <p class="rodape">Padaria Venâncio</p>
   </main>
 </body>
