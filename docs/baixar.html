@@ -170,7 +170,7 @@
          Se a consulta falhar, não anuncia um número desatualizado. -->
     <p class="meta"><span id="versao">Versão atual</span> &middot; Windows</p>
     <script>
-      fetch("https://raw.githubusercontent.com/azelfo/pdv-padaria/main/docs/version.json", { cache: "no-store" })
+      fetch("https://raw.githubusercontent.com/azelfo/pdv-padaria/main/docs/version.json?t=" + Date.now(), { cache: "no-store" })
         .then(function (r) {
           if (!r.ok) throw new Error("Versão indisponível");
           return r.json();
